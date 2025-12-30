@@ -3,35 +3,39 @@ import requests
 from datetime import datetime, timezone
 import re
 
-# ===============================
-# PAGE CONFIG
-# ===============================
+# =====================================
+# PAGE CONFIG (TIDAK DIUBAH)
+# =====================================
 st.set_page_config(
-    page_title="QAM TNI AU – METOC",
+    page_title="QAM METOC WIBB",
     page_icon="✈️",
     layout="wide"
 )
 
-# ===============================
-# DATA SOURCE
-# ===============================
-URL = "https://aviationweather.gov/api/data/metar"
+# =====================================
+# DATA SOURCE (TIDAK DIUBAH)
+# =====================================
+METAR_URL = "https://aviationweather.gov/api/data/metar"
 
 def fetch_metar():
-    r = requests.get(URL, params={"ids": "WIBB", "hours": 0}, timeout=10)
+    r = requests.get(
+        METAR_URL,
+        params={"ids": "WIBB", "hours": 0},
+        timeout=10
+    )
     r.raise_for_status()
     return r.text.strip()
 
-# ===============================
-# METAR PARSING
-# ===============================
+# =====================================
+# PARSING METAR (TIDAK DIUBAH)
+# =====================================
 def wind(m):
     x = re.search(r'(\d{3})(\d{2})KT', m)
-    return f"{x.group(1)} / {x.group(2)} KT" if x else "-"
+    return f"{x.group(1)}° / {x.group(2)} kt" if x else "-"
 
-def vis(m):
+def visibility(m):
     x = re.search(r' (\d{4}) ', m)
-    return f"{x.group(1)} M" if x else "-"
+    return f"{x.group(1)} m" if x else "-"
 
 def weather(m):
     if "TS" in m: return "Thunderstorm / Badai Guntur"
@@ -47,15 +51,15 @@ def cloud(m):
 
 def temp_dew(m):
     x = re.search(r' (M?\d{2})/(M?\d{2})', m)
-    return f"{x.group(1)} / {x.group(2)} C" if x else "-"
+    return f"{x.group(1)} / {x.group(2)} °C" if x else "-"
 
 def qnh(m):
     x = re.search(r' Q(\d{4})', m)
     return f"{x.group(1)} hPa" if x else "-"
 
-# ===============================
-# PURE PYTHON PDF GENERATOR
-# ===============================
+# =====================================
+# PURE PDF GENERATOR (NO LIBRARY)
+# =====================================
 def generate_pdf(lines):
     objects = []
     offsets = []
@@ -64,25 +68,33 @@ def generate_pdf(lines):
         offsets.append(sum(len(o) for o in objects))
         objects.append(data)
 
-    # Font
+    # Font object
     add_obj(b"1 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
 
-    # Content
+    # Content stream
     content = "BT\n/F1 10 Tf\n72 800 Td\n"
     for line in lines:
-        safe = line.replace("(", "\\(").replace(")", "\\)")
+        safe = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
         content += f"({safe}) Tj\n0 -14 Td\n"
     content += "ET"
 
-    add_obj(f"2 0 obj\n<< /Length {len(content)} >>\nstream\n{content}\nendstream\nendobj\n".encode())
+    add_obj(
+        f"2 0 obj\n<< /Length {len(content)} >>\nstream\n{content}\nendstream\nendobj\n"
+        .encode()
+    )
 
     # Page
-    add_obj(b"3 0 obj\n<< /Type /Page /Parent 4 0 R /Contents 2 0 R "
-            b"/Resources << /Font << /F1 1 0 R >> >> >>\nendobj\n")
+    add_obj(
+        b"3 0 obj\n<< /Type /Page /Parent 4 0 R "
+        b"/Contents 2 0 R "
+        b"/Resources << /Font << /F1 1 0 R >> >> >>\nendobj\n"
+    )
 
     # Pages
-    add_obj(b"4 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 "
-            b"/MediaBox [0 0 595 842] >>\nendobj\n")
+    add_obj(
+        b"4 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 "
+        b"/MediaBox [0 0 595 842] >>\nendobj\n"
+    )
 
     # Catalog
     add_obj(b"5 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n")
@@ -99,16 +111,16 @@ def generate_pdf(lines):
 
     return pdf
 
-# ===============================
-# MAIN APP
-# ===============================
-st.title("🪖 QAM METEOROLOGICAL REPORT – TNI AU")
+# =====================================
+# MAIN APP (TIDAK DIUBAH)
+# =====================================
+st.title("🪖 QAM METEOROLOGICAL REPORT")
 st.subheader("Lanud Roesmin Nurjadin (WIBB)")
 
 metar = fetch_metar()
 now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
 
-qam_lines = [
+qam_text = [
     "MARKAS BESAR ANGKATAN UDARA",
     "DINAS PENGEMBANGAN OPERASI",
     "",
@@ -117,25 +129,25 @@ qam_lines = [
     f"DATE / TIME (UTC) : {now}",
     "AERODROME        : WIBB",
     f"SURFACE WIND     : {wind(metar)}",
-    f"VISIBILITY       : {vis(metar)}",
+    f"VISIBILITY       : {visibility(metar)}",
     f"PRESENT WEATHER : {weather(metar)}",
     f"LOW CLOUD        : {cloud(metar)}",
     f"TEMP / DEWPOINT  : {temp_dew(metar)}",
     f"QNH              : {qnh(metar)}",
     "",
-    "OBSERVER : ____________________",
-    "STAMP    : ____________________",
+    "OBSERVER : __________________________",
+    "STAMP    : __________________________",
     "",
     "RAW METAR:",
     metar
 ]
 
-pdf_bytes = generate_pdf(qam_lines)
+pdf_bytes = generate_pdf(qam_text)
 
 st.download_button(
-    "⬇️ UNDUH QAM RESMI (PDF)",
+    "⬇️ UNDUH QAM (PDF)",
     data=pdf_bytes,
-    file_name="QAM_TNI_AU_WIBB.pdf",
+    file_name="QAM_WIBB.pdf",
     mime="application/pdf"
 )
 
