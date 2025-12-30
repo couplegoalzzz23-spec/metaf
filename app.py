@@ -2,47 +2,42 @@ import streamlit as st
 import requests
 from datetime import datetime, timezone
 import re
-from io import BytesIO
 
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from reportlab.lib.units import cm
-
-# =====================================
+# ===============================
 # PAGE CONFIG
-# =====================================
+# ===============================
 st.set_page_config(
-    page_title="QAM TNI AU – METEOROLOGICAL REPORT",
+    page_title="QAM TNI AU – METOC",
     page_icon="✈️",
     layout="wide"
 )
 
-# =====================================
+# ===============================
 # DATA SOURCE
-# =====================================
+# ===============================
 URL = "https://aviationweather.gov/api/data/metar"
 
 def fetch_metar():
-    r = requests.get(URL, params={"ids": "WIBB", "hours": 0}, timeout=10)
+    r = requests.get(URL, params={"ids":"WIBB","hours":0}, timeout=10)
     r.raise_for_status()
     return r.text.strip()
 
-# =====================================
-# PARSING METAR
-# =====================================
+# ===============================
+# METAR PARSING
+# ===============================
 def wind(m):
     x = re.search(r'(\d{3})(\d{2})KT', m)
-    return f"{x.group(1)}° / {x.group(2)} kt" if x else "-"
+    return f"{x.group(1)} / {x.group(2)} KT" if x else "-"
 
 def vis(m):
     x = re.search(r' (\d{4}) ', m)
-    return f"{x.group(1)} m" if x else "-"
+    return f"{x.group(1)} M" if x else "-"
 
 def weather(m):
     if "TS" in m: return "Thunderstorm / Badai Guntur"
     if "RA" in m: return "Rain / Hujan"
     if "FG" in m: return "Fog / Kabut"
-    return "Nil / None"
+    return "Nil"
 
 def cloud(m):
     if "OVC" in m: return "Overcast / Tertutup"
@@ -52,119 +47,94 @@ def cloud(m):
 
 def temp_dew(m):
     x = re.search(r' (M?\d{2})/(M?\d{2})', m)
-    return f"{x.group(1)} / {x.group(2)} °C" if x else "-"
+    return f"{x.group(1)} / {x.group(2)} C" if x else "-"
 
 def qnh(m):
     x = re.search(r' Q(\d{4})', m)
     return f"{x.group(1)} hPa" if x else "-"
 
-# =====================================
-# PDF GENERATOR – FORM QAM TNI AU
-# =====================================
-def generate_qam_pdf(metar):
-    buf = BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    w, h = A4
+# ===============================
+# PURE PDF GENERATOR (NO LIBRARY)
+# ===============================
+def generate_pdf(text_lines):
+    objects = []
+    offsets = []
 
-    # ===== HEADER =====
-    c.setFont("Helvetica-Bold", 11)
-    c.drawCentredString(w/2, h-2*cm,
-        "MARKAS BESAR ANGKATAN UDARA")
-    c.drawCentredString(w/2, h-2.7*cm,
-        "DINAS PENGEMBANGAN OPERASI")
+    def obj(content):
+        offsets.append(sum(len(o) for o in objects))
+        objects.append(content)
 
-    c.setFont("Helvetica-Bold", 12)
-    c.drawCentredString(
-        w/2, h-4*cm,
-        "METEOROLOGICAL REPORT FOR TAKE OFF AND LANDING"
-    )
+    # FONT
+    obj(b"1 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
 
-    y = h-5.5*cm
-    lh = 0.95*cm
+    # CONTENT
+    content = "BT\n/F1 10 Tf\n72 800 Td\n"
+    for line in text_lines:
+        content += f"({line}) Tj\n0 -14 Td\n"
+    content += "ET"
 
-    def row(label, value):
-        nonlocal y
-        c.rect(2*cm, y, 10*cm, lh)
-        c.rect(12*cm, y, 4*cm, lh)
-        c.setFont("Helvetica", 8.5)
-        c.drawString(2.15*cm, y+0.25*cm, label)
-        c.drawString(12.15*cm, y+0.25*cm, value)
-        y -= lh
+    obj(f"2 0 obj\n<< /Length {len(content)} >>\nstream\n{content}\nendstream\nendobj\n".encode())
 
-    now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M")
+    # PAGE
+    obj(b"3 0 obj\n<< /Type /Page /Parent 4 0 R /Contents 2 0 R /Resources << /Font << /F1 1 0 R >> >> >>\nendobj\n")
 
-    # ===== FORM CONTENT (BILINGUAL) =====
-    row("METEOROLOGICAL OBS AT DATE / TIME (UTC)\n"
-        "PENGAMATAN METEOROLOGI TANGGAL / WAKTU (UTC)", now)
+    # PAGES
+    obj(b"4 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 595 842] >>\nendobj\n")
 
-    row("AERODROME IDENTIFICATION\nIDENTIFIKASI BANDARA", "WIBB")
+    # CATALOG
+    obj(b"5 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n")
 
-    row("SURFACE WIND DIRECTION, SPEED AND SIGNIFICANT VARIATION\n"
-        "ARAH & KECEPATAN ANGIN PERMUKAAN",
-        wind(metar))
+    # XREF
+    xref = b"xref\n0 6\n0000000000 65535 f \n"
+    for off in offsets:
+        xref += f"{off:010d} 00000 n \n".encode()
 
-    row("HORIZONTAL VISIBILITY\nJARAK PANDANG MENDATAR", vis(metar))
+    pdf = b"%PDF-1.4\n" + b"".join(objects)
+    pdf += xref
+    pdf += b"trailer\n<< /Size 6 /Root 5 0 R >>\nstartxref\n"
+    pdf += str(len(pdf)).encode() + b"\n%%EOF"
 
-    row("RUNWAY VISUAL RANGE\nJARAK PANDANG LANDASAN", "-")
+    return pdf
 
-    row("PRESENT WEATHER\nCUACA SAAT INI", weather(metar))
-
-    row("AMOUNT AND HEIGHT OF BASE OF LOW CLOUD\n"
-        "JUMLAH & TINGGI DASAR AWAN RENDAH",
-        cloud(metar))
-
-    row("AIR TEMPERATURE AND DEW POINT TEMPERATURE\n"
-        "SUHU UDARA & TITIK EMBUN",
-        temp_dew(metar))
-
-    row("QNH", qnh(metar))
-    row("QFE*", "-")
-    row("SUPPLEMENTARY INFORMATION\nINFORMASI TAMBAHAN",
-        "Refer to METAR")
-
-    # ===== SIGNATURE & STAMP =====
-    y -= 0.5*cm
-    c.rect(2*cm, y, 6*cm, 2.5*cm)
-    c.rect(8.5*cm, y, 3.5*cm, 2.5*cm)
-    c.rect(12.5*cm, y, 3.5*cm, 2.5*cm)
-
-    c.setFont("Helvetica", 9)
-    c.drawString(2.2*cm, y+2.1*cm,
-        "TIME OF ISSUE (UTC)\nWAKTU TERBIT")
-    c.drawString(8.7*cm, y+2.1*cm,
-        "OBSERVER\nPETUGAS")
-    c.drawString(12.7*cm, y+2.1*cm,
-        "STAMP\nSTEMPEL")
-
-    # ===== FOOTER =====
-    c.setFont("Helvetica", 7.5)
-    c.drawCentredString(
-        w/2, 1.3*cm,
-        "DOKUMEN RESMI METEOROLOGI – DIGUNAKAN UNTUK KEPERLUAN OPERASI TNI AU"
-    )
-
-    c.showPage()
-    c.save()
-    buf.seek(0)
-    return buf
-
-# =====================================
+# ===============================
 # MAIN APP
-# =====================================
-st.title("🪖 QAM METEOROLOGICAL REPORT (TNI AU)")
-st.subheader("Lanud Roesmin Nurjadin – WIBB")
+# ===============================
+st.title("🪖 QAM METEOROLOGICAL REPORT – TNI AU")
+st.subheader("Lanud Roesmin Nurjadin (WIBB)")
 
 metar = fetch_metar()
+now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
 
-pdf = generate_qam_pdf(metar)
+qam_lines = [
+    "MARKAS BESAR ANGKATAN UDARA",
+    "DINAS PENGEMBANGAN OPERASI",
+    "",
+    "METEOROLOGICAL REPORT FOR TAKE OFF AND LANDING",
+    "",
+    f"DATE / TIME (UTC) : {now}",
+    "AERODROME        : WIBB",
+    f"SURFACE WIND     : {wind(metar)}",
+    f"VISIBILITY       : {vis(metar)}",
+    f"PRESENT WEATHER : {weather(metar)}",
+    f"LOW CLOUD        : {cloud(metar)}",
+    f"TEMP / DEWPOINT  : {temp_dew(metar)}",
+    f"QNH              : {qnh(metar)}",
+    "",
+    "OBSERVER : ____________________",
+    "STAMP    : ____________________",
+    "",
+    "RAW METAR:",
+    metar
+]
+
+pdf_bytes = generate_pdf(qam_lines)
 
 st.download_button(
     "⬇️ UNDUH QAM RESMI (PDF)",
-    data=pdf,
-    file_name="QAM_TNI_AU_WIBB_BILINGUAL.pdf",
+    data=pdf_bytes,
+    file_name="QAM_TNI_AU_WIBB.pdf",
     mime="application/pdf"
 )
 
 st.divider()
-st.subheader("RAW METAR")
 st.code(metar)
