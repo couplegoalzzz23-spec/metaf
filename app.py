@@ -153,14 +153,46 @@ try:
         for n in notes:
             st.warning(n)
 
+        # ===============================
+        # 📥 UNDUH QAM
+        # ===============================
+        now = datetime.now(timezone.utc)
+        if tz_mode == "WIB":
+            now = now.replace(hour=(now.hour + 7) % 24)
+
+        qam_text = f"""
+QAM – QUICK ASSESSMENT MATRIX
+Lanud Roesmin Nurjadin (WIBB)
+
+STATUS : {status}
+TIME   : {now.strftime('%Y-%m-%d %H:%M:%S')} {tz_mode}
+
+ISSUES :
+"""
+        for n in notes:
+            qam_text += f"- {n}\n"
+
+        qam_text += f"""
+
+RAW METAR:
+{metar}
+"""
+
+        st.download_button(
+            label="⬇️ Unduh QAM (TXT)",
+            data=qam_text,
+            file_name=f"QAM_WIBB_{now.strftime('%Y%m%d_%H%M')}.txt",
+            mime="text/plain"
+        )
+
         st.divider()
         st.code(metar)
 
     # ===============================
-    # OPS MODE (ASLI ANDA)
+    # OPS MODE
     # ===============================
     else:
-        status, color, alerts = qam_assess(metar)
+        status, color, _ = qam_assess(metar)
 
         st.markdown(
             f"""
@@ -172,7 +204,6 @@ try:
             unsafe_allow_html=True
         )
 
-        st.divider()
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("METAR")
@@ -181,35 +212,16 @@ try:
             st.subheader("TAF")
             st.code(taf)
 
-        st.divider()
-        st.subheader("Runway Wind Component (RWY 18 / 36)")
         wd, ws = extract_wind(metar)
-
         if wd:
             h18, c18 = runway_component(wd, ws, 180)
             h36, c36 = runway_component(wd, ws, 360)
 
-            c1, c2 = st.columns(2)
-            with c1:
-                st.metric("RWY 18 Head/Tailwind", f"{h18} kt")
-                st.metric("RWY 18 Crosswind", f"{abs(c18)} kt")
-            with c2:
-                st.metric("RWY 36 Head/Tailwind", f"{h36} kt")
-                st.metric("RWY 36 Crosswind", f"{abs(c36)} kt")
-
-        st.divider()
-        st.subheader("Satellite & Radar")
-
-        st.image(
-            "https://rammb-slider.cira.colostate.edu/data/imagery/latest/"
-            "himawari-9/full_disk/ir/00/000_000.png",
-            use_column_width=True
-        )
-
-        st.image(
-            "https://tilecache.rainviewer.com/v2/radar/nowcast.png",
-            use_column_width=True
-        )
+            st.subheader("Runway Wind Component")
+            st.metric("RWY 18 Head/Tail", f"{h18} kt")
+            st.metric("RWY 18 Crosswind", f"{abs(c18)} kt")
+            st.metric("RWY 36 Head/Tail", f"{h36} kt")
+            st.metric("RWY 36 Crosswind", f"{abs(c36)} kt")
 
     now = datetime.now(timezone.utc)
     if tz_mode == "WIB":
