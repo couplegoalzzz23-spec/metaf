@@ -18,7 +18,7 @@ st.set_page_config(
 URL = "https://aviationweather.gov/api/data/metar"
 
 def fetch_metar():
-    r = requests.get(URL, params={"ids":"WIBB","hours":0}, timeout=10)
+    r = requests.get(URL, params={"ids": "WIBB", "hours": 0}, timeout=10)
     r.raise_for_status()
     return r.text.strip()
 
@@ -54,35 +54,38 @@ def qnh(m):
     return f"{x.group(1)} hPa" if x else "-"
 
 # ===============================
-# PURE PDF GENERATOR (NO LIBRARY)
+# PURE PYTHON PDF GENERATOR
 # ===============================
-def generate_pdf(text_lines):
+def generate_pdf(lines):
     objects = []
     offsets = []
 
-    def obj(content):
+    def add_obj(data):
         offsets.append(sum(len(o) for o in objects))
-        objects.append(content)
+        objects.append(data)
 
-    # FONT
-    obj(b"1 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
+    # Font
+    add_obj(b"1 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
 
-    # CONTENT
+    # Content
     content = "BT\n/F1 10 Tf\n72 800 Td\n"
-    for line in text_lines:
-        content += f"({line}) Tj\n0 -14 Td\n"
+    for line in lines:
+        safe = line.replace("(", "\\(").replace(")", "\\)")
+        content += f"({safe}) Tj\n0 -14 Td\n"
     content += "ET"
 
-    obj(f"2 0 obj\n<< /Length {len(content)} >>\nstream\n{content}\nendstream\nendobj\n".encode())
+    add_obj(f"2 0 obj\n<< /Length {len(content)} >>\nstream\n{content}\nendstream\nendobj\n".encode())
 
-    # PAGE
-    obj(b"3 0 obj\n<< /Type /Page /Parent 4 0 R /Contents 2 0 R /Resources << /Font << /F1 1 0 R >> >> >>\nendobj\n")
+    # Page
+    add_obj(b"3 0 obj\n<< /Type /Page /Parent 4 0 R /Contents 2 0 R "
+            b"/Resources << /Font << /F1 1 0 R >> >> >>\nendobj\n")
 
-    # PAGES
-    obj(b"4 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 595 842] >>\nendobj\n")
+    # Pages
+    add_obj(b"4 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 "
+            b"/MediaBox [0 0 595 842] >>\nendobj\n")
 
-    # CATALOG
-    obj(b"5 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n")
+    # Catalog
+    add_obj(b"5 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n")
 
     # XREF
     xref = b"xref\n0 6\n0000000000 65535 f \n"
