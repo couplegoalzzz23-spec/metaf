@@ -2,217 +2,148 @@ import streamlit as st
 import requests
 from datetime import datetime, timezone
 import re
-import math
 from io import BytesIO
+
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import cm
 
 # =====================================
 # PAGE CONFIG
 # =====================================
 st.set_page_config(
-    page_title="LANUD RSN Tactical METOC",
+    page_title="QAM TNI AU – METEOROLOGICAL REPORT",
     page_icon="✈️",
     layout="wide"
 )
-
-# =====================================
-# SIDEBAR
-# =====================================
-with st.sidebar:
-    st.header("OPS CONTROL")
-    view_mode = st.radio("Mode Tampilan", ["QAM", "OPS"])
-    refresh_min = st.slider("Auto Refresh (menit)", 1, 30, 5)
-    auto_refresh = st.checkbox("Auto Refresh", True)
-    tz_mode = st.radio("Zona Waktu", ["UTC", "WIB"])
-
-if auto_refresh:
-    st.markdown(
-        f"<meta http-equiv='refresh' content='{refresh_min * 60}'>",
-        unsafe_allow_html=True
-    )
 
 # =====================================
 # DATA SOURCE
 # =====================================
 URL = "https://aviationweather.gov/api/data/metar"
 
-def fetch_data():
-    params = {"ids": "WIBB", "hours": 0, "sep": "true", "taf": "true"}
-    r = requests.get(URL, params=params, timeout=10)
+def fetch_metar():
+    r = requests.get(URL, params={"ids": "WIBB", "hours": 0}, timeout=10)
     r.raise_for_status()
-    return r.text.strip().split("\n")
+    return r.text.strip()
 
 # =====================================
-# PARSING
+# PARSING METAR
 # =====================================
-def wind(m):
+def parse_wind(m):
     x = re.search(r'(\d{3})(\d{2})KT', m)
-    return (int(x.group(1)), int(x.group(2))) if x else (None, None)
+    return f"{x.group(1)}° / {x.group(2)} kt" if x else "-"
 
-def visibility(m):
+def parse_visibility(m):
     x = re.search(r' (\d{4}) ', m)
-    return int(x.group(1)) if x else None
+    return f"{x.group(1)} m" if x else "-"
 
-def ceiling(m):
-    if "OVC" in m: return "OVC"
-    if "BKN" in m: return "BKN"
-    if "SCT" in m: return "SCT"
-    return "CLR"
+def parse_weather(m):
+    if "TS" in m: return "Thunderstorm"
+    if "RA" in m: return "Rain"
+    if "FG" in m: return "Fog"
+    return "Nil"
 
-# =====================================
-# QAM ASSESSMENT
-# =====================================
-def qam_assess(m):
-    score = 0
-    notes = []
+def parse_cloud(m):
+    if "OVC" in m: return "Overcast"
+    if "BKN" in m: return "Broken"
+    if "SCT" in m: return "Scattered"
+    return "Clear"
 
-    wd, ws = wind(m)
-    vis = visibility(m)
-    cld = ceiling(m)
+def parse_temp_dew(m):
+    x = re.search(r' (M?\d{2})/(M?\d{2})', m)
+    return f"{x.group(1)} / {x.group(2)} °C" if x else "-"
 
-    if "TS" in m or "CB" in m:
-        score += 2
-        notes.append("Thunderstorm / CB")
-
-    if vis:
-        if vis < 3000:
-            score += 2
-            notes.append("Visibility < 3000 m")
-        elif vis < 5000:
-            score += 1
-            notes.append("Visibility marginal")
-
-    if ws:
-        if ws > 25:
-            score += 2
-            notes.append("Strong wind")
-        elif ws >= 15:
-            score += 1
-            notes.append("Moderate wind")
-
-    if cld == "OVC":
-        score += 2
-        notes.append("Overcast ceiling")
-    elif cld == "BKN":
-        score += 1
-        notes.append("Broken cloud")
-
-    if score == 0:
-        return "🟢 GO", "green", ["All parameters within limits"], "OPERASI DAPAT DILAKSANAKAN"
-    if score <= 2:
-        return "🟡 CAUTION", "orange", notes, "OPERASI DENGAN PEMBATASAN"
-    return "🔴 NO-GO", "red", notes, "OPERASI TIDAK DIREKOMENDASIKAN"
+def parse_qnh(m):
+    x = re.search(r' Q(\d{4})', m)
+    return f"{x.group(1)} hPa" if x else "-"
 
 # =====================================
-# PDF GENERATOR (FAIL-SAFE)
+# PDF FORM GENERATOR (MATCH TEMPLATE)
 # =====================================
-def generate_qam_pdf(text):
-    try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.pdfgen import canvas
+def generate_qam_form(metar):
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    w, h = A4
 
-        buffer = BytesIO()
-        c = canvas.Canvas(buffer, pagesize=A4)
-        width, height = A4
+    # HEADER
+    c.setFont("Helvetica-Bold", 11)
+    c.drawCentredString(w / 2, h - 2 * cm,
+                        "MARKAS BESAR ANGKATAN UDARA")
+    c.drawCentredString(w / 2, h - 2.7 * cm,
+                        "DINAS PENGEMBANGAN OPERASI")
 
-        y = height - 50
-        for line in text.split("\n"):
-            c.drawString(40, y, line)
-            y -= 14
-            if y < 40:
-                c.showPage()
-                y = height - 50
+    c.setFont("Helvetica-Bold", 12)
+    c.drawCentredString(
+        w / 2, h - 4 * cm,
+        "METEOROLOGICAL REPORT FOR TAKE OFF AND LANDING"
+    )
 
-        c.save()
-        buffer.seek(0)
-        return buffer
-    except Exception:
-        return None
+    y = h - 5.5 * cm
+    lh = 0.9 * cm
+
+    def row(label, value):
+        nonlocal y
+        c.rect(2 * cm, y, 10 * cm, lh)
+        c.rect(12 * cm, y, 4 * cm, lh)
+        c.setFont("Helvetica", 9)
+        c.drawString(2.2 * cm, y + 0.3 * cm, label)
+        c.drawString(12.2 * cm, y + 0.3 * cm, value)
+        y -= lh
+
+    now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M")
+
+    # FORM ROWS (SAMA SEPERTI TEMPLATE)
+    row("METEOROLOGICAL OBS AT DATE / TIME (UTC)", now)
+    row("AERODROME IDENTIFICATION", "WIBB")
+    row("SURFACE WIND DIRECTION, SPEED AND SIGNIFICANT VARIATION",
+        parse_wind(metar))
+    row("HORIZONTAL VISIBILITY", parse_visibility(metar))
+    row("RUNWAY VISUAL RANGE", "-")
+    row("PRESENT WEATHER", parse_weather(metar))
+    row("AMOUNT AND HEIGHT OF BASE OF LOW CLOUD",
+        parse_cloud(metar))
+    row("AIR TEMPERATURE AND DEW POINT TEMPERATURE",
+        parse_temp_dew(metar))
+    row("QNH", parse_qnh(metar))
+    row("QFE*", "-")
+    row("SUPPLEMENTARY INFORMATION", "Refer METAR")
+
+    # FOOTER
+    y -= 0.5 * cm
+    c.rect(2 * cm, y, 7 * cm, lh)
+    c.rect(9 * cm, y, 3 * cm, lh)
+    c.rect(12 * cm, y, 4 * cm, lh)
+
+    c.drawString(2.2 * cm, y + 0.3 * cm,
+                 "TIME OF ISSUE (UTC)")
+    c.drawString(9.2 * cm, y + 0.3 * cm,
+                 "ON REQUEST")
+    c.drawString(12.2 * cm, y + 0.3 * cm,
+                 "OBSERVER")
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf
 
 # =====================================
-# MAIN
+# MAIN APP
 # =====================================
-st.title("✈️ Tactical METOC Dashboard")
+st.title("🪖 QAM METEOROLOGICAL REPORT")
 st.subheader("Lanud Roesmin Nurjadin (WIBB)")
 
-try:
-    lines = fetch_data()
-    metar = next(l for l in lines if l.startswith("METAR"))
-    taf = next(l for l in lines if l.startswith("TAF"))
+metar = fetch_metar()
 
-    status, color, notes, recommendation = qam_assess(metar)
+pdf = generate_qam_form(metar)
 
-    # ===============================
-    # QAM MODE
-    # ===============================
-    if view_mode == "QAM":
-        st.markdown(
-            f"""
-            <div style="padding:25px;border-radius:12px;
-            background:{color};color:white;font-size:32px;
-            font-weight:bold;text-align:center;">
-            {status}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+st.download_button(
+    "⬇️ UNDUH QAM RESMI TNI AU (PDF)",
+    data=pdf,
+    file_name="QAM_TNI_AU_WIBB.pdf",
+    mime="application/pdf"
+)
 
-        # 🪖 COMMANDER SUMMARY
-        st.subheader("🪖 Commander Summary")
-        st.markdown(f"**Recommendation:** {recommendation}")
-        for n in notes:
-            st.warning(n)
-
-        now = datetime.now(timezone.utc)
-        if tz_mode == "WIB":
-            now = now.replace(hour=(now.hour + 7) % 24)
-
-        qam_text = f"""
-QAM – QUICK ASSESSMENT MATRIX
-Lanud Roesmin Nurjadin (WIBB)
-
-STATUS         : {status}
-RECOMMENDATION : {recommendation}
-TIME           : {now.strftime('%Y-%m-%d %H:%M:%S')} {tz_mode}
-
-ISSUES:
-"""
-        for n in notes:
-            qam_text += f"- {n}\n"
-
-        qam_text += f"""
-
-RAW METAR:
-{metar}
-"""
-
-        # PDF TRY
-        pdf = generate_qam_pdf(qam_text)
-        if pdf:
-            st.download_button(
-                "⬇️ Unduh QAM (PDF)",
-                data=pdf,
-                file_name=f"QAM_WIBB_{now.strftime('%Y%m%d_%H%M')}.pdf",
-                mime="application/pdf"
-            )
-        else:
-            st.download_button(
-                "⬇️ Unduh QAM (TXT)",
-                data=qam_text,
-                file_name=f"QAM_WIBB_{now.strftime('%Y%m%d_%H%M')}.txt",
-                mime="text/plain"
-            )
-
-        st.divider()
-        st.code(metar)
-
-    # ===============================
-    # OPS MODE (TIDAK DIUBAH)
-    # ===============================
-    else:
-        st.code(metar)
-        st.code(taf)
-
-    st.caption(f"Last Update: {now.strftime('%Y-%m-%d %H:%M:%S')} {tz_mode}")
-
-except Exception as e:
-    st.error(f"ERROR: {e}")
+st.divider()
+st.subheader("RAW METAR")
+st.code(metar)
