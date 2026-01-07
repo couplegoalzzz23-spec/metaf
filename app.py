@@ -1,157 +1,155 @@
-<?php
-// Get API URL
-$api_url = "https://api.bmkg.go.id/publik/prakiraan-cuaca?adm4=31.71.01.1001";
-$response_body = @file_get_contents($api_url);
+import streamlit as st
+import requests
+from datetime import datetime, timezone
+import re
 
-// Check if fail
-if ($response_body === false) {
-    die("ERROR: Gagal mengambil data.");
-}
+# =====================================
+# PAGE CONFIG (TIDAK DIUBAH)
+# =====================================
+st.set_page_config(
+    page_title="QAM METOC WIBB",
+    page_icon="✈️",
+    layout="wide"
+)
 
-// Decode String JSON
-$data = json_decode($response_body, true);
+# =====================================
+# DATA SOURCE (TIDAK DIUBAH)
+# =====================================
+METAR_URL = "https://aviationweather.gov/api/data/metar"
 
-if ($data === null && json_last_error() !== JSON_ERROR_NONE) {
-    die(
-        "ERROR: Data bukan format JSON yang valid. " .
-            htmlspecialchars(json_last_error_msg())
-    );
-}
+def fetch_metar():
+    r = requests.get(
+        METAR_URL,
+        params={"ids": "WIBB", "hours": 0},
+        timeout=10
+    )
+    r.raise_for_status()
+    return r.text.strip()
 
-// Set header
-header("Content-Type: text/html; charset=utf-8");
-?>
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Prakiraan Cuaca BMKG</title>
-    <style>
-        body { font-family: sans-serif; line-height: 1.5; padding: 15px; }
-        h2, h3, h4 { margin-top: 1.5em; margin-bottom: 0.5em; }
-        ul { list-style: none; padding-left: 0; }
-        li { margin-bottom: 0.5em; border-bottom: 1px solid #eee; padding-bottom: 0.5em; }
-        img { width: 20px; height: 20px; vertical-align: middle; margin-left: 5px; }
-        pre { background-color: #f4f4f4; padding: 10px; border: 1px solid #ddd; overflow-x: auto; }
-    </style>
-</head>
-<body>
+# =====================================
+# PARSING METAR (TIDAK DIUBAH)
+# =====================================
+def wind(m):
+    x = re.search(r'(\d{3})(\d{2})KT', m)
+    return f"{x.group(1)}° / {x.group(2)} kt" if x else "-"
 
-<h1>Prakiraan Cuaca BMKG</h1>
+def visibility(m):
+    x = re.search(r' (\d{4}) ', m)
+    return f"{x.group(1)} m" if x else "-"
 
-<?php
-// Location
-if (isset($data["lokasi"]["desa"]) && isset($data["lokasi"]["kecamatan"])) {
-    echo "<h2>Desa/Kelurahan: " .
-        htmlspecialchars($data["lokasi"]["desa"]) .
-        "</h2>";
-    echo "<p>";
-    echo "Kecamatan: " .
-        htmlspecialchars($data["lokasi"]["kecamatan"] ?? "N/A") .
-        "<br>";
-    echo "Kota/Kabupaten: " .
-        htmlspecialchars($data["lokasi"]["kotkab"] ?? "N/A") .
-        "<br>";
-    echo "Provinsi: " .
-        htmlspecialchars($data["lokasi"]["provinsi"] ?? "N/A") .
-        "<br>";
-    echo "Koordinat Latitude: " .
-        htmlspecialchars($data["lokasi"]["lat"] ?? "N/A") .
-        ", Longitude: " .
-        htmlspecialchars($data["lokasi"]["lon"] ?? "N/A") .
-        "<br>";
-    echo "Timezone: " .
-        htmlspecialchars($data["lokasi"]["timezone"] ?? "N/A") .
-        "<br>";
-    echo "</p>";
-} else {
-    echo "<h2>Lokasi Tidak Ditemukan</h2>";
-}
+def weather(m):
+    if "TS" in m: return "Thunderstorm / Badai Guntur"
+    if "RA" in m: return "Rain / Hujan"
+    if "FG" in m: return "Fog / Kabut"
+    return "Nil"
 
-// Weather forecast data
-echo "<h3>Detail Prakiraan Cuaca:</h3>";
-if (isset($data["data"][0]["cuaca"]) && is_array($data["data"][0]["cuaca"])) {
-    foreach ($data["data"][0]["cuaca"] as $index_hari => $prakiraan_harian) {
-        echo "<h4>Hari ke-" . ($index_hari + 1) . "</h4>";
-        echo "<ul>";
-        if (is_array($prakiraan_harian)) {
-            foreach ($prakiraan_harian as $prakiraan) {
-                $waktu_lokal = isset($prakiraan["local_datetime"])
-                    ? htmlspecialchars($prakiraan["local_datetime"])
-                    : "N/A";
-                $deskripsi = isset($prakiraan["weather_desc"])
-                    ? htmlspecialchars($prakiraan["weather_desc"])
-                    : "N/A";
-                $alt_text = isset($prakiraan["weather_desc"])
-                    ? htmlspecialchars(
-                        $prakiraan["weather_desc"],
-                        ENT_QUOTES,
-                        "UTF-8",
-                    )
-                    : "Ikon Cuaca";
-                $suhu = isset($prakiraan["t"])
-                    ? htmlspecialchars($prakiraan["t"])
-                    : "N/A";
-                $kelembapan = isset($prakiraan["hu"])
-                    ? htmlspecialchars($prakiraan["hu"])
-                    : "N/A";
-                $kec_angin = isset($prakiraan["ws"])
-                    ? htmlspecialchars($prakiraan["ws"])
-                    : "N/A";
-                $arah_angin = isset($prakiraan["wd"])
-                    ? htmlspecialchars($prakiraan["wd"])
-                    : "N/A";
-                $jarak_pandang = isset($prakiraan["vs_text"])
-                    ? htmlspecialchars($prakiraan["vs_text"])
-                    : "N/A";
+def cloud(m):
+    if "OVC" in m: return "Overcast / Tertutup"
+    if "BKN" in m: return "Broken / Terputus"
+    if "SCT" in m: return "Scattered / Tersebar"
+    return "Clear / Cerah"
 
-                $raw_img_url = isset($prakiraan["image"])
-                    ? $prakiraan["image"]
-                    : "";
-                $img_url_processed = "";
+def temp_dew(m):
+    x = re.search(r' (M?\d{2})/(M?\d{2})', m)
+    return f"{x.group(1)} / {x.group(2)} °C" if x else "-"
 
-                if (!empty($raw_img_url)) {
-                    $img_url_processed = str_replace(" ", "%20", $raw_img_url);
-                }
+def qnh(m):
+    x = re.search(r' Q(\d{4})', m)
+    return f"{x.group(1)} hPa" if x else "-"
 
-                echo "<li>";
-                echo "<strong>Jam:</strong> " . $waktu_lokal . " | ";
-                echo "<strong>Cuaca:</strong> " . $deskripsi . " ";
-                if (
-                    $img_url_processed &&
-                    filter_var($img_url_processed, FILTER_VALIDATE_URL)
-                ) {
-                    echo '<img src="' .
-                        $img_url_processed .
-                        '" alt="' .
-                        $alt_text .
-                        '" title="' .
-                        $alt_text .
-                        '"> | ';
-                }
-                echo "<strong>Suhu:</strong> " . $suhu . "°C | ";
-                echo "<strong>Kelembapan:</strong> " . $kelembapan . "% | ";
-                echo "<strong>Kec. Angin:</strong> " . $kec_angin . "km/j | ";
-                echo "<strong>Arah Angin:</strong> dari " . $arah_angin . " | ";
-                echo "<strong>Jarak Pandang:</strong> " . $jarak_pandang;
-                echo "</li>";
-            }
-        } else {
-            echo "<li>Data tidak valid.</li>";
-        }
-        echo "</ul>";
-    }
-} else {
-    echo "<p>Struktur data prakiraan cuaca tidak ditemukan.</p>";
-}
+# =====================================
+# PURE PDF GENERATOR (NO LIBRARY)
+# =====================================
+def generate_pdf(lines):
+    objects = []
+    offsets = []
 
-// Debugging $data
-/*
-echo "<pre>";
-print_r($data);
-echo "</pre>";
-*/
-?>
-</body>
-</html>
+    def add_obj(data):
+        offsets.append(sum(len(o) for o in objects))
+        objects.append(data)
+
+    # Font object
+    add_obj(b"1 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
+
+    # Content stream
+    content = "BT\n/F1 10 Tf\n72 800 Td\n"
+    for line in lines:
+        safe = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        content += f"({safe}) Tj\n0 -14 Td\n"
+    content += "ET"
+
+    add_obj(
+        f"2 0 obj\n<< /Length {len(content)} >>\nstream\n{content}\nendstream\nendobj\n"
+        .encode()
+    )
+
+    # Page
+    add_obj(
+        b"3 0 obj\n<< /Type /Page /Parent 4 0 R "
+        b"/Contents 2 0 R "
+        b"/Resources << /Font << /F1 1 0 R >> >> >>\nendobj\n"
+    )
+
+    # Pages
+    add_obj(
+        b"4 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 "
+        b"/MediaBox [0 0 595 842] >>\nendobj\n"
+    )
+
+    # Catalog
+    add_obj(b"5 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n")
+
+    # XREF
+    xref = b"xref\n0 6\n0000000000 65535 f \n"
+    for off in offsets:
+        xref += f"{off:010d} 00000 n \n".encode()
+
+    pdf = b"%PDF-1.4\n" + b"".join(objects)
+    pdf += xref
+    pdf += b"trailer\n<< /Size 6 /Root 5 0 R >>\nstartxref\n"
+    pdf += str(len(pdf)).encode() + b"\n%%EOF"
+
+    return pdf
+
+# =====================================
+# MAIN APP (TIDAK DIUBAH)
+# =====================================
+st.title("🪖 QAM METEOROLOGICAL REPORT")
+st.subheader("Lanud Roesmin Nurjadin (WIBB)")
+
+metar = fetch_metar()
+now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
+
+qam_text = [
+    "MARKAS BESAR ANGKATAN UDARA",
+    "DINAS PENGEMBANGAN OPERASI",
+    "",
+    "METEOROLOGICAL REPORT FOR TAKE OFF AND LANDING",
+    "",
+    f"DATE / TIME (UTC) : {now}",
+    "AERODROME        : WIBB",
+    f"SURFACE WIND     : {wind(metar)}",
+    f"VISIBILITY       : {visibility(metar)}",
+    f"PRESENT WEATHER : {weather(metar)}",
+    f"LOW CLOUD        : {cloud(metar)}",
+    f"TEMP / DEWPOINT  : {temp_dew(metar)}",
+    f"QNH              : {qnh(metar)}",
+    "",
+    "OBSERVER : __________________________",
+    "STAMP    : __________________________",
+    "",
+    "RAW METAR:",
+    metar
+]
+
+pdf_bytes = generate_pdf(qam_text)
+
+st.download_button(
+    "⬇️ UNDUH QAM (PDF)",
+    data=pdf_bytes,
+    file_name="QAM_WIBB.pdf",
+    mime="application/pdf"
+)
+
+st.divider()
+st.code(metar)
