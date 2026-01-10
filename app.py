@@ -3,10 +3,6 @@ import requests
 from datetime import datetime, timezone
 import re
 
-# === TAMBAHAN (AMAN) ===
-import pandas as pd
-import matplotlib.pyplot as plt
-
 # =====================================
 # PAGE CONFIG (TIDAK DIUBAH)
 # =====================================
@@ -29,20 +25,6 @@ def fetch_metar():
     )
     r.raise_for_status()
     return r.text.strip()
-
-# === TAMBAHAN: HISTORICAL METAR ===
-def fetch_metar_history(hours=24):
-    r = requests.get(
-        METAR_URL,
-        params={
-            "ids": "WIBB",
-            "hours": hours,
-            "sep": "true"
-        },
-        timeout=10
-    )
-    r.raise_for_status()
-    return r.text.strip().splitlines()
 
 # =====================================
 # PARSING METAR (TIDAK DIUBAH)
@@ -75,32 +57,8 @@ def qnh(m):
     x = re.search(r' Q(\d{4})', m)
     return f"{x.group(1)} hPa" if x else "-"
 
-# === TAMBAHAN: PARSING NUMERIK UNTUK GRAFIK ===
-def parse_numeric_metar(m):
-    data = {}
-
-    t = re.search(r' (\d{2})(\d{2})Z', m)
-    if not t:
-        return None
-    data["time"] = datetime.strptime(t.group(0).strip(), "%d%H%MZ")
-
-    w = re.search(r'(\d{3})(\d{2})KT', m)
-    data["wind"] = int(w.group(2)) if w else None
-
-    td = re.search(r' (M?\d{2})/(M?\d{2})', m)
-    if td:
-        data["temp"] = int(td.group(1).replace("M", "-"))
-        data["dew"] = int(td.group(2).replace("M", "-"))
-    else:
-        data["temp"] = data["dew"] = None
-
-    q = re.search(r' Q(\d{4})', m)
-    data["qnh"] = int(q.group(1)) if q else None
-
-    return data
-
 # =====================================
-# PURE PDF GENERATOR (TIDAK DIUBAH)
+# PURE PDF GENERATOR (NO LIBRARY)
 # =====================================
 def generate_pdf(lines):
     objects = []
@@ -110,8 +68,10 @@ def generate_pdf(lines):
         offsets.append(sum(len(o) for o in objects))
         objects.append(data)
 
+    # Font object
     add_obj(b"1 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
 
+    # Content stream
     content = "BT\n/F1 10 Tf\n72 800 Td\n"
     for line in lines:
         safe = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
@@ -123,19 +83,23 @@ def generate_pdf(lines):
         .encode()
     )
 
+    # Page
     add_obj(
         b"3 0 obj\n<< /Type /Page /Parent 4 0 R "
         b"/Contents 2 0 R "
         b"/Resources << /Font << /F1 1 0 R >> >> >>\nendobj\n"
     )
 
+    # Pages
     add_obj(
         b"4 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 "
         b"/MediaBox [0 0 595 842] >>\nendobj\n"
     )
 
+    # Catalog
     add_obj(b"5 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n")
 
+    # XREF
     xref = b"xref\n0 6\n0000000000 65535 f \n"
     for off in offsets:
         xref += f"{off:010d} 00000 n \n".encode()
@@ -148,7 +112,7 @@ def generate_pdf(lines):
     return pdf
 
 # =====================================
-# MAIN APP (ASLI)
+# MAIN APP (TIDAK DIUBAH)
 # =====================================
 st.title("QAM METEOROLOGICAL REPORT")
 st.subheader("Lanud Roesmin Nurjadin (WIBB)")
@@ -171,6 +135,9 @@ qam_text = [
     f"TEMP / DEWPOINT  : {temp_dew(metar)}",
     f"QNH              : {qnh(metar)}",
     "",
+    "OBSERVER : obs on duty",
+    "STAMP    : __________________________",
+    "",
     "RAW METAR:",
     metar
 ]
@@ -186,9 +153,8 @@ st.download_button(
 
 st.divider()
 st.code(metar)
-
 # =====================================
-# 📈 HISTORICAL METEOGRAM (BARU)
+# 📈 HISTORICAL METEOGRAM (NO MATPLOTLIB)
 # =====================================
 st.subheader("📊 Historical METAR Meteogram — WIBB (Last 24h)")
 
@@ -196,14 +162,38 @@ raw = fetch_metar_history(24)
 records = [parse_numeric_metar(m) for m in raw]
 df = pd.DataFrame([r for r in records if r])
 
-df.sort_values("time", inplace=True)
+if df.empty:
+    st.warning("No historical METAR data available.")
+else:
+    df.sort_values("time", inplace=True)
 
-fig, ax = plt.subplots()
-ax.plot(df["time"], df["temp"], label="Temperature (°C)")
-ax.plot(df["time"], df["dew"], label="Dew Point (°C)")
-ax.set_ylabel("°C")
-ax.set_xlabel("UTC Time")
-ax.grid(True)
-ax.legend()
+    fig = go.Figure()
 
-st.pyplot(fig)
+    fig.add_trace(
+        go.Scatter(
+            x=df["time"],
+            y=df["temp"],
+            mode="lines+markers",
+            name="Temperature (°C)"
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=df["time"],
+            y=df["dew"],
+            mode="lines+markers",
+            name="Dew Point (°C)"
+        )
+    )
+
+    fig.update_layout(
+        height=400,
+        margin=dict(l=40, r=40, t=40, b=40),
+        xaxis_title="UTC Time",
+        yaxis_title="Temperature (°C)",
+        legend_title="METAR Parameter",
+        hovermode="x unified"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
