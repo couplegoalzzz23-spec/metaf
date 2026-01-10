@@ -135,7 +135,7 @@ qam_text = [
     f"TEMP / DEWPOINT  : {temp_dew(metar)}",
     f"QNH              : {qnh(metar)}",
     "",
-    "OBSERVER : obs ond= duty",
+    "OBSERVER : obs on duty",
     "STAMP    : __________________________",
     "",
     "RAW METAR:",
