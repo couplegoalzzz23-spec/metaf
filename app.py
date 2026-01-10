@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # =====================================
-# PAGE CONFIG (ONLY ONCE)
+# PAGE CONFIG
 # =====================================
 st.set_page_config(
     page_title="QAM METOC WIBB",
@@ -16,17 +16,16 @@ st.set_page_config(
 )
 
 # =====================================
-# DATA SOURCES (OFFICIAL)
+# DATA SOURCE (OFFICIAL)
 # =====================================
-METAR_API = "https://aviationweather.gov/api/data/metar"
-TAF_LEGACY_API = "https://aviationweather.gov/data/metar/"
+METAR_URL = "https://aviationweather.gov/api/data/metar"
 
 # =====================================
-# FETCH METAR + TAF (PRIMARY)
+# FETCH METAR + TAF (SINGLE CALL)
 # =====================================
 def fetch_metar_and_taf():
     r = requests.get(
-        METAR_API,
+        METAR_URL,
         params={
             "ids": "WIBB",
             "include_taf": "yes"
@@ -49,29 +48,14 @@ def fetch_metar_and_taf():
             taf_lines.append(l)
 
     taf = "\n".join(taf_lines)
-    return metar, taf.strip()
-
-# =====================================
-# FETCH TAF ONLY (FALLBACK)
-# =====================================
-def fetch_taf_only(station="WIBB"):
-    r = requests.get(
-        TAF_LEGACY_API,
-        params={"ids": station, "taf": "1"},
-        timeout=10
-    )
-    r.raise_for_status()
-
-    text = r.text.strip()
-    match = re.search(rf"(TAF\s+{station}[\s\S]*)", text)
-    return match.group(1).strip() if match else ""
+    return metar, taf
 
 # =====================================
 # HISTORICAL METAR
 # =====================================
 def fetch_metar_history(hours=24):
     r = requests.get(
-        METAR_API,
+        METAR_URL,
         params={"ids": "WIBB", "hours": hours},
         timeout=10
     )
@@ -106,7 +90,7 @@ def fetch_metar_ogimet(hours=24):
     return [l.strip() for l in r.text.splitlines() if l.startswith("WIBB")]
 
 # =====================================
-# METAR PARSERS
+# METAR DISPLAY PARSER
 # =====================================
 def wind(m):
     x = re.search(r'(\d{3})(\d{2})KT', m)
@@ -124,6 +108,9 @@ def qnh(m):
     x = re.search(r' Q(\d{4})', m)
     return f"{x.group(1)} hPa" if x else "-"
 
+# =====================================
+# METAR NUMERIC PARSER
+# =====================================
 def parse_numeric_metar(m):
     t = re.search(r' (\d{2})(\d{2})(\d{2})Z', m)
     if not t:
@@ -132,6 +119,7 @@ def parse_numeric_metar(m):
     data = {
         "time": datetime.strptime(t.group(0).strip(), "%d%H%MZ"),
         "wind": None,
+        "wind_dir": None,
         "temp": None,
         "dew": None,
         "qnh": None,
@@ -141,49 +129,96 @@ def parse_numeric_metar(m):
         "FG": "FG" in m
     }
 
-    if w := re.search(r'(\d{3})(\d{2})KT', m):
+    w = re.search(r'(\d{3})(\d{2})KT', m)
+    if w:
+        data["wind_dir"] = int(w.group(1))
         data["wind"] = int(w.group(2))
 
-    if td := re.search(r' (M?\d{2})/(M?\d{2})', m):
+    td = re.search(r' (M?\d{2})/(M?\d{2})', m)
+    if td:
         data["temp"] = int(td.group(1).replace("M", "-"))
         data["dew"] = int(td.group(2).replace("M", "-"))
 
-    if q := re.search(r' Q(\d{4})', m):
+    q = re.search(r' Q(\d{4})', m)
+    if q:
         data["qnh"] = int(q.group(1))
 
-    if v := re.search(r' (\d{4}) ', m):
+    v = re.search(r' (\d{4}) ', m)
+    if v:
         data["vis"] = int(v.group(1))
 
     return data
 
 # =====================================
-# MAIN APP — QAM METOC
+# SIMPLE PDF GENERATOR
+# =====================================
+def generate_pdf(lines):
+    content = "BT\n/F1 10 Tf\n72 800 Td\n"
+    for l in lines:
+        safe = l.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        content += f"({safe}) Tj\n0 -14 Td\n"
+    content += "ET"
+
+    return (
+        b"%PDF-1.4\n"
+        b"1 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n"
+        b"2 0 obj<< /Length " + str(len(content)).encode() +
+        b" >>stream\n" + content.encode() +
+        b"\nendstream endobj\n"
+        b"3 0 obj<< /Type /Page /Parent 4 0 R /Contents 2 0 R "
+        b"/Resources<< /Font<< /F1 1 0 R >> >> >>endobj\n"
+        b"4 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 "
+        b"/MediaBox [0 0 595 842] >>endobj\n"
+        b"5 0 obj<< /Type /Catalog /Pages 4 0 R >>endobj\n"
+        b"xref\n0 6\n0000000000 65535 f \n"
+        b"trailer<< /Size 6 /Root 5 0 R >>\n%%EOF"
+    )
+
+# =====================================
+# MAIN APP — QAM
 # =====================================
 st.title("QAM METEOROLOGICAL REPORT")
 st.subheader("Lanud Roesmin Nurjadin (WIBB)")
 
+metar, taf = fetch_metar_and_taf()
 now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
 
-metar, taf_primary = fetch_metar_and_taf()
-taf = taf_primary if taf_primary else fetch_taf_only("WIBB")
+qam_text = [
+    "METEOROLOGICAL REPORT (QAM)",
+    f"DATE / TIME (UTC) : {now}",
+    "AERODROME        : WIBB",
+    f"SURFACE WIND     : {wind(metar)}",
+    f"VISIBILITY       : {visibility(metar)}",
+    f"TEMP / DEWPOINT  : {temp_dew(metar)}",
+    f"QNH              : {qnh(metar)}",
+    "",
+    "RAW METAR:",
+    metar,
+    "",
+    "RAW TAF:",
+    taf if taf else "TAF not issued"
+]
 
-st.caption(f"UTC Time: {now} | Source: NOAA / AviationWeather.gov")
+st.download_button(
+    "⬇️ Download QAM (PDF)",
+    data=generate_pdf(qam_text),
+    file_name="QAM_WIBB.pdf",
+    mime="application/pdf"
+)
 
-st.divider()
-st.subheader("🟢 CURRENT METAR (RAW)")
 st.code(metar)
 
 # =====================================
-# TAFOR PANEL (FINAL, VERIFIED)
+# TAFOR — RAW ICAO
 # =====================================
 st.divider()
 st.subheader("✈️ TAFOR — Terminal Aerodrome Forecast (RAW ICAO)")
 
-if taf:
-    st.caption("Official ICAO TAF | NOAA / FAA")
+if taf.strip():
+    st.caption("Official ICAO TAF | AviationWeather.gov (NOAA/FAA)")
     st.code(taf)
 else:
-    st.warning("TAF not issued for WIBB at this time.")
+    st.info("TAF not issued for WIBB at this time.")
 
 # =====================================
 # HISTORICAL METEOGRAM
@@ -229,3 +264,27 @@ if not df.empty:
 
     fig.update_layout(height=950, hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
+
+# =====================================
+# EXPORT CSV / JSON
+# =====================================
+st.divider()
+st.subheader("📥 Download Historical METAR Data")
+
+if not df.empty:
+    export_df = df.copy()
+    export_df["time"] = export_df["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    st.download_button(
+        "⬇️ Download CSV",
+        export_df.to_csv(index=False),
+        "WIBB_METAR_24H.csv",
+        "text/csv"
+    )
+
+    st.download_button(
+        "⬇️ Download JSON",
+        export_df.to_json(orient="records"),
+        "WIBB_METAR_24H.json",
+        "application/json"
+    )
