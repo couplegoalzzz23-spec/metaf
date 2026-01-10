@@ -16,24 +16,43 @@ st.set_page_config(
 )
 
 # =====================================
-# DATA SOURCES
+# DATA SOURCE (OFFICIAL)
 # =====================================
 METAR_URL = "https://aviationweather.gov/api/data/metar"
-TAF_URL   = "https://aviationweather.gov/api/data/taf"
 
 # =====================================
-# FETCH METAR / TAF
+# FETCH METAR + TAF (SINGLE CALL)
 # =====================================
-def fetch_metar():
-    r = requests.get(METAR_URL, params={"ids": "WIBB"}, timeout=10)
+def fetch_metar_and_taf():
+    r = requests.get(
+        METAR_URL,
+        params={
+            "ids": "WIBB",
+            "include_taf": "yes"
+        },
+        timeout=10
+    )
     r.raise_for_status()
-    return r.text.strip()
 
-def fetch_taf():
-    r = requests.get(TAF_URL, params={"ids": "WIBB"}, timeout=10)
-    r.raise_for_status()
-    return r.text.strip()
+    lines = [l.strip() for l in r.text.splitlines() if l.strip()]
 
+    metar = ""
+    taf_lines = []
+
+    for l in lines:
+        if (l.startswith("METAR") or l.startswith("SPECI") or l.startswith("WIBB")) and not metar:
+            metar = l
+        elif l.startswith("TAF"):
+            taf_lines.append(l)
+        elif taf_lines:
+            taf_lines.append(l)
+
+    taf = "\n".join(taf_lines)
+    return metar, taf
+
+# =====================================
+# HISTORICAL METAR
+# =====================================
 def fetch_metar_history(hours=24):
     r = requests.get(
         METAR_URL,
@@ -136,7 +155,8 @@ def parse_numeric_metar(m):
 def generate_pdf(lines):
     content = "BT\n/F1 10 Tf\n72 800 Td\n"
     for l in lines:
-        content += f"({l}) Tj\n0 -14 Td\n"
+        safe = l.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        content += f"({safe}) Tj\n0 -14 Td\n"
     content += "ET"
 
     return (
@@ -155,24 +175,28 @@ def generate_pdf(lines):
     )
 
 # =====================================
-# MAIN UI — QAM
+# MAIN APP — QAM
 # =====================================
 st.title("QAM METEOROLOGICAL REPORT")
-st.subheader("Lanud Roesmin Nurjadin — WIBB")
+st.subheader("Lanud Roesmin Nurjadin (WIBB)")
 
-metar = fetch_metar()
+metar, taf = fetch_metar_and_taf()
 now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
 
 qam_text = [
-    "METEOROLOGICAL REPORT",
-    f"DATE/TIME UTC : {now}",
-    f"SURFACE WIND  : {wind(metar)}",
-    f"VISIBILITY    : {visibility(metar)}",
-    f"TEMP / DEW    : {temp_dew(metar)}",
-    f"QNH           : {qnh(metar)}",
+    "METEOROLOGICAL REPORT (QAM)",
+    f"DATE / TIME (UTC) : {now}",
+    "AERODROME        : WIBB",
+    f"SURFACE WIND     : {wind(metar)}",
+    f"VISIBILITY       : {visibility(metar)}",
+    f"TEMP / DEWPOINT  : {temp_dew(metar)}",
+    f"QNH              : {qnh(metar)}",
     "",
     "RAW METAR:",
-    metar
+    metar,
+    "",
+    "RAW TAF:",
+    taf if taf else "TAF not issued"
 ]
 
 st.download_button(
@@ -190,11 +214,11 @@ st.code(metar)
 st.divider()
 st.subheader("✈️ TAFOR — Terminal Aerodrome Forecast (RAW ICAO)")
 
-try:
-    taf = fetch_taf()
-    st.code(taf if taf else "TAF not available")
-except Exception:
-    st.warning("TAF data not available")
+if taf.strip():
+    st.caption("Official ICAO TAF | AviationWeather.gov (NOAA/FAA)")
+    st.code(taf)
+else:
+    st.info("TAF not issued for WIBB at this time.")
 
 # =====================================
 # HISTORICAL METEOGRAM
@@ -207,7 +231,7 @@ source = "AviationWeather.gov"
 
 if not raw or len(raw) < 2:
     raw = fetch_metar_ogimet(24)
-    source = "OGIMET"
+    source = "OGIMET Archive"
 
 records = [parse_numeric_metar(m) for m in raw]
 df = pd.DataFrame([r for r in records if r])
@@ -224,7 +248,7 @@ if not df.empty:
             "Wind Speed (kt)",
             "QNH (hPa)",
             "Visibility (m)",
-            "Weather Flags"
+            "Weather Flags (RA / TS / FG)"
         ]
     )
 
@@ -232,7 +256,7 @@ if not df.empty:
     fig.add_trace(go.Scatter(x=df["time"], y=df["dew"], name="Dew"), 1, 1)
     fig.add_trace(go.Scatter(x=df["time"], y=df["wind"], name="Wind"), 2, 1)
     fig.add_trace(go.Scatter(x=df["time"], y=df["qnh"], name="QNH"), 3, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Vis"), 4, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Visibility"), 4, 1)
 
     fig.add_trace(go.Scatter(x=df["time"], y=df["RA"].astype(int), mode="markers", name="RA"), 5, 1)
     fig.add_trace(go.Scatter(x=df["time"], y=df["TS"].astype(int), mode="markers", name="TS"), 5, 1)
