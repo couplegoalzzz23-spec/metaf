@@ -1,45 +1,155 @@
-import re
+import streamlit as st
 import requests
+from datetime import datetime, timezone
+import re
 
-# Dictionary of weather codes and descriptions
-weather_codes = {
-    "01": "Sunny",
-    "02": "Partly Cloudy",
-    "03": "Cloudy",
-    "04": "Light Rain",
-    "05": "Heavy Rain",
-    "06": "Snow",
-    "07": "Sleet",
-    "08": "Hail",
-    "09": "Thunderstorm",
-    "10": "Tornado",
-    "11": "Unknown"
-}
+# =====================================
+# PAGE CONFIG (TIDAK DIUBAH)
+# =====================================
+st.set_page_config(
+    page_title="QAM METOC WIBB",
+    page_icon="✈️",
+    layout="wide"
+)
 
-# Fungsi untuk memParsing METAR data
-def parse_metar(metar_data):
-    # Gunakan regex untuk mengekstrak informasi cuaca
-    weather_pattern = r"([A-Z]{2,4})"  # Contoh pattern untuk mengekstrak kode cuaca
-    weather_match = re.search(weather_pattern, metar_data)
-    
-    if weather_match:
-        weather_code = weather_match.group(1)
-        return weather_codes.get(weather_code, "Unknown")
-    else:
-        return "Unknown"
+# =====================================
+# DATA SOURCE (TIDAK DIUBAH)
+# =====================================
+METAR_URL = "https://aviationweather.gov/api/data/metar"
 
-# Fungsi untuk mengambil METAR data dari API
-def get_metar_data(icao_code):
-    url = f"http://aviationweather.gov/metar/data?ids={icao_code}&format=raw&date=&hours=0&taf=off&layout=on&std=off"
-    response = requests.get(url)
-    return response.text
+def fetch_metar():
+    r = requests.get(
+        METAR_URL,
+        params={"ids": "WIBB", "hours": 0},
+        timeout=10
+    )
+    r.raise_for_status()
+    return r.text.strip()
 
-# Fungsi utama
-def main():
-    icao_code = "KJFK"  # Kode ICAO untuk Bandara JFK
-    metar_data = get_metar_data(icao_code)
-    weather_description = parse_metar(metar_data)
-    print(f"Weather at {icao_code}: {weather_description}")
+# =====================================
+# PARSING METAR (TIDAK DIUBAH)
+# =====================================
+def wind(m):
+    x = re.search(r'(\d{3})(\d{2})KT', m)
+    return f"{x.group(1)}° / {x.group(2)} kt" if x else "-"
 
-if __name__ == "__main__":
-    main()
+def visibility(m):
+    x = re.search(r' (\d{4}) ', m)
+    return f"{x.group(1)} m" if x else "-"
+
+def weather(m):
+    if "TS" in m: return "Thunderstorm / Badai Guntur"
+    if "RA" in m: return "Rain / Hujan"
+    if "FG" in m: return "Fog / Kabut"
+    return "Nil"
+
+def cloud(m):
+    if "OVC" in m: return "Overcast / Tertutup"
+    if "BKN" in m: return "Broken / Terputus"
+    if "SCT" in m: return "Scattered / Tersebar"
+    return "Clear / Cerah"
+
+def temp_dew(m):
+    x = re.search(r' (M?\d{2})/(M?\d{2})', m)
+    return f"{x.group(1)} / {x.group(2)} °C" if x else "-"
+
+def qnh(m):
+    x = re.search(r' Q(\d{4})', m)
+    return f"{x.group(1)} hPa" if x else "-"
+
+# =====================================
+# PURE PDF GENERATOR (NO LIBRARY)
+# =====================================
+def generate_pdf(lines):
+    objects = []
+    offsets = []
+
+    def add_obj(data):
+        offsets.append(sum(len(o) for o in objects))
+        objects.append(data)
+
+    # Font object
+    add_obj(b"1 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
+
+    # Content stream
+    content = "BT\n/F1 10 Tf\n72 800 Td\n"
+    for line in lines:
+        safe = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        content += f"({safe}) Tj\n0 -14 Td\n"
+    content += "ET"
+
+    add_obj(
+        f"2 0 obj\n<< /Length {len(content)} >>\nstream\n{content}\nendstream\nendobj\n"
+        .encode()
+    )
+
+    # Page
+    add_obj(
+        b"3 0 obj\n<< /Type /Page /Parent 4 0 R "
+        b"/Contents 2 0 R "
+        b"/Resources << /Font << /F1 1 0 R >> >> >>\nendobj\n"
+    )
+
+    # Pages
+    add_obj(
+        b"4 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 "
+        b"/MediaBox [0 0 595 842] >>\nendobj\n"
+    )
+
+    # Catalog
+    add_obj(b"5 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n")
+
+    # XREF
+    xref = b"xref\n0 6\n0000000000 65535 f \n"
+    for off in offsets:
+        xref += f"{off:010d} 00000 n \n".encode()
+
+    pdf = b"%PDF-1.4\n" + b"".join(objects)
+    pdf += xref
+    pdf += b"trailer\n<< /Size 6 /Root 5 0 R >>\nstartxref\n"
+    pdf += str(len(pdf)).encode() + b"\n%%EOF"
+
+    return pdf
+
+# =====================================
+# MAIN APP (TIDAK DIUBAH)
+# =====================================
+st.title("QAM METEOROLOGICAL REPORT")
+st.subheader("Lanud Roesmin Nurjadin (WIBB)")
+
+metar = fetch_metar()
+now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
+
+qam_text = [
+    "MARKAS BESAR ANGKATAN UDARA",
+    "DINAS PENGEMBANGAN OPERASI",
+    "",
+    "METEOROLOGICAL REPORT FOR TAKE OFF AND LANDING",
+    "",
+    f"DATE / TIME (UTC) : {now}",
+    "AERODROME        : WIBB",
+    f"SURFACE WIND     : {wind(metar)}",
+    f"VISIBILITY       : {visibility(metar)}",
+    f"PRESENT WEATHER : {weather(metar)}",
+    f"LOW CLOUD        : {cloud(metar)}",
+    f"TEMP / DEWPOINT  : {temp_dew(metar)}",
+    f"QNH              : {qnh(metar)}",
+    "",
+    "OBSERVER : obs on duty",
+    "STAMP    : __________________________",
+    "",
+    "RAW METAR:",
+    metar
+]
+
+pdf_bytes = generate_pdf(qam_text)
+
+st.download_button(
+    "⬇️ UNDUH QAM (PDF)",
+    data=pdf_bytes,
+    file_name="QAM_WIBB.pdf",
+    mime="application/pdf"
+)
+
+st.divider()
+st.code(metar)
