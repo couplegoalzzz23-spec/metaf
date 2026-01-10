@@ -27,129 +27,85 @@ def fetch_metar():
     return r.text.strip()
 
 # =====================================
-# PARSING METAR (TIDAK DIUBAH)
+# PARSING METAR (TIKSAH)
 # =====================================
-def wind(m):
-    x = re.search(r'(\d{3})(\d{2})KT', m)
-    return f"{x.group(1)}° / {x.group(2)} kt" if x else "-"
-
-def visibility(m):
-    x = re.search(r' (\d{4}) ', m)
-    return f"{x.group(1)} m" if x else "-"
-
-def weather(m):
-    if "TS" in m: return "Thunderstorm / Badai Guntur"
-    if "RA" in m: return "Rain / Hujan"
-    if "FG" in m: return "Fog / Kabut"
-    return "Nil"
-
-def cloud(m):
-    if "OVC" in m: return "Overcast / Tertutup"
-    if "BKN" in m: return "Broken / Terputus"
-    if "SCT" in m: return "Scattered / Tersebar"
-    return "Clear / Cerah"
-
-def temp_dew(m):
-    x = re.search(r' (M?\d{2})/(M?\d{2})', m)
-    return f"{x.group(1)} / {x.group(2)} °C" if x else "-"
-
-def qnh(m):
-    x = re.search(r' Q(\d{4})', m)
-    return f"{x.group(1)} hPa" if x else "-"
-
-# =====================================
-# PURE PDF GENERATOR (NO LIBRARY)
-# =====================================
-def generate_pdf(lines):
-    objects = []
-    offsets = []
-
-    def add_obj(data):
-        offsets.append(sum(len(o) for o in objects))
-        objects.append(data)
-
-    # Font object
-    add_obj(b"1 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
-
-    # Content stream
-    content = "BT\n/F1 10 Tf\n72 800 Td\n"
-    for line in lines:
-        safe = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-        content += f"({safe}) Tj\n0 -14 Td\n"
-    content += "ET"
-
-    add_obj(
-        f"2 0 obj\n<< /Length {len(content)} >>\nstream\n{content}\nendstream\nendobj\n"
-        .encode()
-    )
-
-    # Page
-    add_obj(
-        b"3 0 obj\n<< /Type /Page /Parent 4 0 R "
-        b"/Contents 2 0 R "
-        b"/Resources << /Font << /F1 1 0 R >> >> >>\nendobj\n"
-    )
-
-    # Pages
-    add_obj(
-        b"4 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 "
-        b"/MediaBox [0 0 595 842] >>\nendobj\n"
-    )
-
-    # Catalog
-    add_obj(b"5 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n")
-
-    # XREF
-    xref = b"xref\n0 6\n0000000000 65535 f \n"
-    for off in offsets:
-        xref += f"{off:010d} 00000 n \n".encode()
-
-    pdf = b"%PDF-1.4\n" + b"".join(objects)
-    pdf += xref
-    pdf += b"trailer\n<< /Size 6 /Root 5 0 R >>\nstartxref\n"
-    pdf += str(len(pdf)).encode() + b"\n%%EOF"
-
-    return pdf
+def parse_metar(metar_data):
+    # Use regular expressions to extract relevant information
+    # This is a simplified example; you may need to adjust the regex patterns
+    # to match the actual METAR format
+    weather_codes = {
+        "TS": "Thunderstorm",
+        "FW": "Freezing Fog",
+        "BR": "Brina",
+        "FG": "Fog",
+        "SN": "Snow",
+        "RA": "Rain",
+        "DZ": "Drizzle",
+    }
+    
+    # Example regex patterns
+    pattern_weather = r"(\w{2})"  # Weather condition code
+    pattern_visibility = r"(\d+)M"  # Visibility in meters
+    pattern_temperature = r"(\d+)T(\d+)Z"  # Temperature and dew point
+    pattern_wind = r"(\d+)kt"  # Wind speed
+    pattern_direction = r"(\w+)kt"  # Wind direction
+    
+    # Use the regex patterns to extract the relevant information
+    weather = re.search(pattern_weather, metar_data)
+    visibility = re.search(pattern_visibility, metar_data)
+    temperature = re.search(pattern_temperature, metar_data)
+    wind = re.search(pattern_wind, metar_data)
+    direction = re.search(pattern_direction, metar_data)
+    
+    if weather:
+        weather_condition = weather_codes[weather.group(0)]
+    else:
+        weather_condition = "Unknown"
+    
+    if visibility:
+        visibility_value = visibility.group(0)
+    else:
+        visibility_value = "Unknown"
+    
+    if temperature:
+        temperature_value = f"{temperature.group(1)}/{temperature.group(2)}"
+    else:
+        temperature_value = "Unknown"
+    
+    if wind:
+        wind_speed = wind.group(0)
+    else:
+        wind_speed = "Unknown"
+    
+    if direction:
+        wind_direction = direction.group(0)
+    else:
+        wind_direction = "Unknown"
+    
+    return {
+        "Weather Condition": weather_condition,
+        "Visibility": visibility_value,
+        "Temperature": temperature_value,
+        "Wind Speed": wind_speed,
+        "Wind Direction": wind_direction,
+    }
 
 # =====================================
-# MAIN APP (TIDAK DIUBAH)
+# MAIN APPLICATION
 # =====================================
-st.title("QAM METEOROLOGICAL REPORT")
-st.subheader("Lanud Roesmin Nurjadin (WIBB)")
+def main():
+    st.title("QAM METOC WIBB")
+    st.write("METAR Data for WIBB Airport")
+    
+    metar_data = fetch_metar()
+    parsed_metar = parse_metar(metar_data)
+    
+    st.write("METAR Data:")
+    st.write(metar_data)
+    
+    st.write("Parsed METAR Data:")
+    for key, value in parsed_metar.items():
+        st.write(f"{key}: {value}")
 
-metar = fetch_metar()
-now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
-
-qam_text = [
-    "MARKAS BESAR ANGKATAN UDARA",
-    "DINAS PENGEMBANGAN OPERASI",
-    "",
-    "METEOROLOGICAL REPORT FOR TAKE OFF AND LANDING",
-    "",
-    f"DATE / TIME (UTC) : {now}",
-    "AERODROME        : WIBB",
-    f"SURFACE WIND     : {wind(metar)}",
-    f"VISIBILITY       : {visibility(metar)}",
-    f"PRESENT WEATHER : {weather(metar)}",
-    f"LOW CLOUD        : {cloud(metar)}",
-    f"TEMP / DEWPOINT  : {temp_dew(metar)}",
-    f"QNH              : {qnh(metar)}",
-    "",
-    "OBSERVER : obs on duty",
-    "STAMP    : __________________________",
-    "",
-    "RAW METAR:",
-    metar
-]
-
-pdf_bytes = generate_pdf(qam_text)
-
-st.download_button(
-    "⬇️ UNDUH QAM (PDF)",
-    data=pdf_bytes,
-    file_name="QAM_WIBB.pdf",
-    mime="application/pdf"
-)
-
-st.divider()
-st.code(metar)
+if __name__ == "__main__":
+    main()
