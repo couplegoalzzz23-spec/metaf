@@ -262,3 +262,41 @@ else:
 
     fig.update_layout(height=950, hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
+# =====================================
+# 📥 DATA EXPORT (CSV & JSON)
+# =====================================
+st.subheader("📥 Download Historical METAR Data")
+
+if not df.empty:
+    # Pastikan waktu dalam ISO format
+    export_df = df.copy()
+    export_df["time"] = export_df["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # CSV
+    csv_data = export_df.to_csv(index=False).encode("utf-8")
+
+    # JSON
+    json_data = export_df.to_json(
+        orient="records",
+        date_format="iso"
+    ).encode("utf-8")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.download_button(
+            "⬇️ Download CSV",
+            data=csv_data,
+            file_name="WIBB_METAR_Historical_24h.csv",
+            mime="text/csv"
+        )
+
+    with col2:
+        st.download_button(
+            "⬇️ Download JSON",
+            data=json_data,
+            file_name="WIBB_METAR_Historical_24h.json",
+            mime="application/json"
+        )
+else:
+    st.info("Tidak ada data untuk diunduh.")
