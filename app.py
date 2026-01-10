@@ -5,6 +5,7 @@ import re
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # =====================================
 # PAGE CONFIG
@@ -21,7 +22,7 @@ st.set_page_config(
 METAR_URL = "https://aviationweather.gov/api/data/metar"
 
 # =====================================
-# REAL-TIME METAR (AVIATIONWEATHER)
+# REAL-TIME METAR
 # =====================================
 def fetch_metar():
     r = requests.get(
@@ -38,19 +39,12 @@ def fetch_metar():
 def fetch_metar_history(hours=24):
     r = requests.get(
         METAR_URL,
-        params={
-            "ids": "WIBB",
-            "hours": hours
-        },
+        params={"ids": "WIBB", "hours": hours},
         timeout=10
     )
     r.raise_for_status()
     text = r.text.strip()
-
-    if not text:
-        return []
-
-    return text.splitlines()
+    return text.splitlines() if text else []
 
 # =====================================
 # HISTORICAL METAR (OGIMET FALLBACK)
@@ -60,7 +54,6 @@ def fetch_metar_ogimet(hours=24):
     start = end - pd.Timedelta(hours=hours)
 
     url = "https://www.ogimet.com/display_metars2.php"
-
     params = {
         "lang": "en",
         "lugar": "WIBB",
@@ -82,13 +75,7 @@ def fetch_metar_ogimet(hours=24):
     r = requests.get(url, params=params, timeout=15)
     r.raise_for_status()
 
-    lines = []
-    for line in r.text.splitlines():
-        line = line.strip()
-        if line.startswith("WIBB"):
-            lines.append(line)
-
-    return lines
+    return [l.strip() for l in r.text.splitlines() if l.startswith("WIBB")]
 
 # =====================================
 # METAR PARSING (DISPLAY)
@@ -122,79 +109,70 @@ def qnh(m):
     return f"{x.group(1)} hPa" if x else "-"
 
 # =====================================
-# METAR PARSING (NUMERIC FOR GRAPH)
+# METAR PARSING (NUMERIC)
 # =====================================
 def parse_numeric_metar(m):
-    data = {}
-
     t = re.search(r' (\d{2})(\d{2})(\d{2})Z', m)
     if not t:
         return None
 
-    data["time"] = datetime.strptime(t.group(0).strip(), "%d%H%MZ")
+    data = {
+        "time": datetime.strptime(t.group(0).strip(), "%d%H%MZ"),
+        "wind": None,
+        "wind_dir": None,
+        "temp": None,
+        "dew": None,
+        "qnh": None,
+        "vis": None,
+        "RA": "RA" in m,
+        "TS": "TS" in m,
+        "FG": "FG" in m
+    }
 
     w = re.search(r'(\d{3})(\d{2})KT', m)
-    data["wind"] = int(w.group(2)) if w else None
+    if w:
+        data["wind_dir"] = int(w.group(1))
+        data["wind"] = int(w.group(2))
 
     td = re.search(r' (M?\d{2})/(M?\d{2})', m)
     if td:
         data["temp"] = int(td.group(1).replace("M", "-"))
         data["dew"] = int(td.group(2).replace("M", "-"))
-    else:
-        data["temp"] = None
-        data["dew"] = None
 
     q = re.search(r' Q(\d{4})', m)
-    data["qnh"] = int(q.group(1)) if q else None
+    if q:
+        data["qnh"] = int(q.group(1))
+
+    v = re.search(r' (\d{4}) ', m)
+    if v:
+        data["vis"] = int(v.group(1))
 
     return data
 
 # =====================================
-# PURE PDF GENERATOR (NO LIBRARY)
+# PURE PDF GENERATOR
 # =====================================
 def generate_pdf(lines):
-    objects = []
-    offsets = []
-
-    def add_obj(data):
-        offsets.append(sum(len(o) for o in objects))
-        objects.append(data)
-
-    add_obj(b"1 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
-
     content = "BT\n/F1 10 Tf\n72 800 Td\n"
-    for line in lines:
-        safe = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    for l in lines:
+        safe = l.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
         content += f"({safe}) Tj\n0 -14 Td\n"
     content += "ET"
 
-    add_obj(
-        f"2 0 obj\n<< /Length {len(content)} >>\nstream\n{content}\nendstream\nendobj\n"
-        .encode()
+    pdf = (
+        b"%PDF-1.4\n"
+        b"1 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n"
+        b"2 0 obj<< /Length " + str(len(content)).encode() +
+        b" >>stream\n" + content.encode() +
+        b"\nendstream endobj\n"
+        b"3 0 obj<< /Type /Page /Parent 4 0 R /Contents 2 0 R "
+        b"/Resources<< /Font<< /F1 1 0 R >> >> >>endobj\n"
+        b"4 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 "
+        b"/MediaBox [0 0 595 842] >>endobj\n"
+        b"5 0 obj<< /Type /Catalog /Pages 4 0 R >>endobj\n"
+        b"xref\n0 6\n0000000000 65535 f \n"
+        b"trailer<< /Size 6 /Root 5 0 R >>\n%%EOF"
     )
-
-    add_obj(
-        b"3 0 obj\n<< /Type /Page /Parent 4 0 R "
-        b"/Contents 2 0 R "
-        b"/Resources << /Font << /F1 1 0 R >> >> >>\nendobj\n"
-    )
-
-    add_obj(
-        b"4 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 "
-        b"/MediaBox [0 0 595 842] >>\nendobj\n"
-    )
-
-    add_obj(b"5 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n")
-
-    xref = b"xref\n0 6\n0000000000 65535 f \n"
-    for off in offsets:
-        xref += f"{off:010d} 00000 n \n".encode()
-
-    pdf = b"%PDF-1.4\n" + b"".join(objects)
-    pdf += xref
-    pdf += b"trailer\n<< /Size 6 /Root 5 0 R >>\nstartxref\n"
-    pdf += str(len(pdf)).encode() + b"\n%%EOF"
-
     return pdf
 
 # =====================================
@@ -225,11 +203,9 @@ qam_text = [
     metar
 ]
 
-pdf_bytes = generate_pdf(qam_text)
-
 st.download_button(
     "⬇️ UNDUH QAM (PDF)",
-    data=pdf_bytes,
+    data=generate_pdf(qam_text),
     file_name="QAM_WIBB.pdf",
     mime="application/pdf"
 )
@@ -238,9 +214,10 @@ st.divider()
 st.code(metar)
 
 # =====================================
-# HISTORICAL METAR METEOGRAM (AUTO FALLBACK)
+# 🎖️ MIL-STYLE MULTI-PANEL METEOGRAM
 # =====================================
 st.subheader("📊 Historical METAR Meteogram — WIBB (Last 24h)")
+st.caption("MIL-style multi-panel | METAR-based | Situational awareness only")
 
 raw = fetch_metar_history(24)
 source = "AviationWeather.gov"
@@ -259,29 +236,29 @@ if df.empty:
 else:
     df.sort_values("time", inplace=True)
 
-    fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=df["time"],
-        y=df["temp"],
-        mode="lines+markers",
-        name="Temperature (°C)"
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=df["time"],
-        y=df["dew"],
-        mode="lines+markers",
-        name="Dew Point (°C)"
-    ))
-
-    fig.update_layout(
-        height=420,
-        xaxis_title="UTC Time",
-        yaxis_title="Temperature (°C)",
-        hovermode="x unified",
-        legend_title="Parameter",
-        margin=dict(l=40, r=40, t=30, b=40)
+    fig = make_subplots(
+        rows=5, cols=1, shared_xaxes=True, vertical_spacing=0.03,
+        subplot_titles=[
+            "Temperature / Dew Point (°C)",
+            "Wind Speed (kt)",
+            "QNH (hPa)",
+            "Visibility (m)",
+            "Weather Flags (RA / TS / FG)"
+        ]
     )
 
+    fig.add_trace(go.Scatter(x=df["time"], y=df["temp"], name="Temp"), 1, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["dew"], name="Dew"), 1, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["wind"], name="Wind"), 2, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["qnh"], name="QNH"), 3, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Visibility"), 4, 1)
+
+    fig.add_trace(go.Scatter(x=df["time"], y=df["RA"].astype(int),
+                             mode="markers", name="RA"), 5, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["TS"].astype(int),
+                             mode="markers", name="TS"), 5, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["FG"].astype(int),
+                             mode="markers", name="FG"), 5, 1)
+
+    fig.update_layout(height=950, hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
