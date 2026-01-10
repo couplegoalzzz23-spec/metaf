@@ -114,7 +114,7 @@ def generate_pdf(lines):
 # =====================================
 # MAIN APP (TIDAK DIUBAH)
 # =====================================
-st.title("🪖 QAM METEOROLOGICAL REPORT")
+st.title("QAM METEOROLOGICAL REPORT")
 st.subheader("Lanud Roesmin Nurjadin (WIBB)")
 
 metar = fetch_metar()
@@ -135,7 +135,7 @@ qam_text = [
     f"TEMP / DEWPOINT  : {temp_dew(metar)}",
     f"QNH              : {qnh(metar)}",
     "",
-    "OBSERVER : __________________________",
+    "OBSERVER : obs ond= duty",
     "STAMP    : __________________________",
     "",
     "RAW METAR:",
