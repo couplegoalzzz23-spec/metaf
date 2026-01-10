@@ -5,6 +5,8 @@ import re
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from PIL import Image, ImageDraw
+import io
 
 # =====================================
 # PAGE CONFIG
@@ -16,39 +18,61 @@ st.set_page_config(
 )
 
 # =====================================
-# DATA SOURCE (OFFICIAL)
+# GEO REFERENCE WIBB
+# =====================================
+WIBB_LAT = 0.4608
+WIBB_LON = 101.4445
+RADIUS_NM = 100
+
+# =====================================
+# DATA SOURCE
 # =====================================
 METAR_URL = "https://aviationweather.gov/api/data/metar"
 
 # =====================================
-# FETCH METAR + TAF (SINGLE CALL)
+# IMAGE OVERLAY UTIL
+# =====================================
+def overlay_info(image_bytes, title=""):
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    ts = datetime.utcnow().strftime("%d %b %Y %H:%M UTC")
+
+    text = (
+        f"{title}\n"
+        f"{ts}\n"
+        f"WIBB Radius ±{RADIUS_NM} NM\n"
+        "REFERENCE ONLY"
+    )
+
+    draw.rectangle((10, 10, 380, 110), fill=(0, 0, 0, 180))
+    draw.text((20, 20), text, fill="white")
+
+    return img
+
+# =====================================
+# FETCH METAR + TAF
 # =====================================
 def fetch_metar_and_taf():
     r = requests.get(
         METAR_URL,
-        params={
-            "ids": "WIBB",
-            "include_taf": "yes"
-        },
+        params={"ids": "WIBB", "include_taf": "yes"},
         timeout=10
     )
     r.raise_for_status()
 
     lines = [l.strip() for l in r.text.splitlines() if l.strip()]
-
     metar = ""
     taf_lines = []
 
     for l in lines:
-        if (l.startswith("METAR") or l.startswith("SPECI") or l.startswith("WIBB")) and not metar:
+        if not metar and l.startswith("WIBB"):
             metar = l
         elif l.startswith("TAF"):
             taf_lines.append(l)
         elif taf_lines:
             taf_lines.append(l)
 
-    taf = "\n".join(taf_lines)
-    return metar, taf
+    return metar, "\n".join(taf_lines)
 
 # =====================================
 # HISTORICAL METAR
@@ -87,29 +111,10 @@ def fetch_metar_ogimet(hours=24):
 
     r = requests.get(url, params=params, timeout=15)
     r.raise_for_status()
-    return [l.strip() for l in r.text.splitlines() if l.startswith("WIBB")]
+    return [l for l in r.text.splitlines() if l.startswith("WIBB")]
 
 # =====================================
-# METAR DISPLAY PARSER
-# =====================================
-def wind(m):
-    x = re.search(r'(\d{3})(\d{2})KT', m)
-    return f"{x.group(1)}° / {x.group(2)} kt" if x else "-"
-
-def visibility(m):
-    x = re.search(r' (\d{4}) ', m)
-    return f"{x.group(1)} m" if x else "-"
-
-def temp_dew(m):
-    x = re.search(r' (M?\d{2})/(M?\d{2})', m)
-    return f"{x.group(1)} / {x.group(2)} °C" if x else "-"
-
-def qnh(m):
-    x = re.search(r' Q(\d{4})', m)
-    return f"{x.group(1)} hPa" if x else "-"
-
-# =====================================
-# METAR NUMERIC PARSER
+# METAR PARSER
 # =====================================
 def parse_numeric_metar(m):
     t = re.search(r' (\d{2})(\d{2})(\d{2})Z', m)
@@ -129,99 +134,47 @@ def parse_numeric_metar(m):
         "FG": "FG" in m
     }
 
-    w = re.search(r'(\d{3})(\d{2})KT', m)
-    if w:
+    if w := re.search(r'(\d{3})(\d{2})KT', m):
         data["wind_dir"] = int(w.group(1))
         data["wind"] = int(w.group(2))
 
-    td = re.search(r' (M?\d{2})/(M?\d{2})', m)
-    if td:
+    if td := re.search(r' (M?\d{2})/(M?\d{2})', m):
         data["temp"] = int(td.group(1).replace("M", "-"))
         data["dew"] = int(td.group(2).replace("M", "-"))
 
-    q = re.search(r' Q(\d{4})', m)
-    if q:
+    if q := re.search(r' Q(\d{4})', m):
         data["qnh"] = int(q.group(1))
 
-    v = re.search(r' (\d{4}) ', m)
-    if v:
+    if v := re.search(r' (\d{4}) ', m):
         data["vis"] = int(v.group(1))
 
     return data
 
 # =====================================
-# SIMPLE PDF GENERATOR
-# =====================================
-def generate_pdf(lines):
-    content = "BT\n/F1 10 Tf\n72 800 Td\n"
-    for l in lines:
-        safe = l.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-        content += f"({safe}) Tj\n0 -14 Td\n"
-    content += "ET"
-
-    return (
-        b"%PDF-1.4\n"
-        b"1 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n"
-        b"2 0 obj<< /Length " + str(len(content)).encode() +
-        b" >>stream\n" + content.encode() +
-        b"\nendstream endobj\n"
-        b"3 0 obj<< /Type /Page /Parent 4 0 R /Contents 2 0 R "
-        b"/Resources<< /Font<< /F1 1 0 R >> >> >>endobj\n"
-        b"4 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 "
-        b"/MediaBox [0 0 595 842] >>endobj\n"
-        b"5 0 obj<< /Type /Catalog /Pages 4 0 R >>endobj\n"
-        b"xref\n0 6\n0000000000 65535 f \n"
-        b"trailer<< /Size 6 /Root 5 0 R >>\n%%EOF"
-    )
-
-# =====================================
-# MAIN APP — QAM
+# MAIN — QAM
 # =====================================
 st.title("QAM METEOROLOGICAL REPORT")
-st.subheader("Lanud Roesmin Nurjadin (WIBB)")
+st.subheader("Lanud Roesmin Nurjadin — WIBB")
 
 metar, taf = fetch_metar_and_taf()
 now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
 
-qam_text = [
-    "METEOROLOGICAL REPORT (QAM)",
-    f"DATE / TIME (UTC) : {now}",
-    "AERODROME        : WIBB",
-    f"SURFACE WIND     : {wind(metar)}",
-    f"VISIBILITY       : {visibility(metar)}",
-    f"TEMP / DEWPOINT  : {temp_dew(metar)}",
-    f"QNH              : {qnh(metar)}",
-    "",
-    "RAW METAR:",
-    metar,
-    "",
-    "RAW TAF:",
-    taf if taf else "TAF not issued"
-]
+st.markdown(f"""
+**DATE / TIME (UTC):** {now}  
+**AERODROME:** WIBB  
+""")
 
-st.download_button(
-    "⬇️ Download QAM (PDF)",
-    data=generate_pdf(qam_text),
-    file_name="QAM_WIBB.pdf",
-    mime="application/pdf"
-)
+st.code(metar if metar else "METAR not available")
 
-st.code(metar)
-
-# =====================================
-# TAFOR — RAW ICAO
-# =====================================
-st.divider()
 st.subheader("✈️ TAFOR — Terminal Aerodrome Forecast (RAW ICAO)")
-
 if taf.strip():
-    st.caption("Official ICAO TAF | AviationWeather.gov (NOAA/FAA)")
+    st.caption("Official ICAO TAF — AviationWeather.gov")
     st.code(taf)
 else:
     st.info("TAF not issued for WIBB at this time.")
 
 # =====================================
-# HISTORICAL METEOGRAM
+# METEOGRAM
 # =====================================
 st.divider()
 st.subheader("📊 Historical METAR Meteogram — Last 24h")
@@ -229,7 +182,7 @@ st.subheader("📊 Historical METAR Meteogram — Last 24h")
 raw = fetch_metar_history(24)
 source = "AviationWeather.gov"
 
-if not raw or len(raw) < 2:
+if len(raw) < 2:
     raw = fetch_metar_ogimet(24)
     source = "OGIMET Archive"
 
@@ -266,25 +219,45 @@ if not df.empty:
     st.plotly_chart(fig, use_container_width=True)
 
 # =====================================
-# EXPORT CSV / JSON
+# SATELLITE & RADAR
+# =====================================
+st.divider()
+st.subheader("🛰️ Satellite & Radar — Riau")
+
+HIMAWARI = "https://inderaja.bmkg.go.id/IMAGE/HIMA/H08_EH_Indonesia.png"
+RADAR = "https://inderaja.bmkg.go.id/IMAGE/Radar/Radar_Pekanbaru.png"
+
+for title, url in [
+    ("Himawari-8 IR Enhanced", HIMAWARI),
+    ("Weather Radar — Pekanbaru", RADAR)
+]:
+    try:
+        r = requests.get(url, timeout=10)
+        img = overlay_info(r.content, title)
+        st.image(img, use_container_width=True)
+    except:
+        st.warning(f"{title} unavailable")
+
+# =====================================
+# EXPORT
 # =====================================
 st.divider()
 st.subheader("📥 Download Historical METAR Data")
 
 if not df.empty:
-    export_df = df.copy()
-    export_df["time"] = export_df["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    df_export = df.copy()
+    df_export["time"] = df_export["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     st.download_button(
         "⬇️ Download CSV",
-        export_df.to_csv(index=False),
+        df_export.to_csv(index=False),
         "WIBB_METAR_24H.csv",
         "text/csv"
     )
 
     st.download_button(
         "⬇️ Download JSON",
-        export_df.to_json(orient="records"),
+        df_export.to_json(orient="records"),
         "WIBB_METAR_24H.json",
         "application/json"
     )
