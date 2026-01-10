@@ -2,7 +2,6 @@ import streamlit as st
 import requests
 from datetime import datetime, timezone
 import re
-
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -17,25 +16,24 @@ st.set_page_config(
 )
 
 # =====================================
-# DATA SOURCE
+# DATA SOURCES
 # =====================================
 METAR_URL = "https://aviationweather.gov/api/data/metar"
+TAF_URL   = "https://aviationweather.gov/api/data/taf"
 
 # =====================================
-# REAL-TIME METAR
+# FETCH METAR / TAF
 # =====================================
 def fetch_metar():
-    r = requests.get(
-        METAR_URL,
-        params={"ids": "WIBB", "hours": 0},
-        timeout=10
-    )
+    r = requests.get(METAR_URL, params={"ids": "WIBB"}, timeout=10)
     r.raise_for_status()
     return r.text.strip()
 
-# =====================================
-# HISTORICAL METAR (AVIATIONWEATHER)
-# =====================================
+def fetch_taf():
+    r = requests.get(TAF_URL, params={"ids": "WIBB"}, timeout=10)
+    r.raise_for_status()
+    return r.text.strip()
+
 def fetch_metar_history(hours=24):
     r = requests.get(
         METAR_URL,
@@ -43,12 +41,8 @@ def fetch_metar_history(hours=24):
         timeout=10
     )
     r.raise_for_status()
-    text = r.text.strip()
-    return text.splitlines() if text else []
+    return r.text.strip().splitlines()
 
-# =====================================
-# HISTORICAL METAR (OGIMET FALLBACK)
-# =====================================
 def fetch_metar_ogimet(hours=24):
     end = datetime.utcnow()
     start = end - pd.Timedelta(hours=hours)
@@ -74,11 +68,10 @@ def fetch_metar_ogimet(hours=24):
 
     r = requests.get(url, params=params, timeout=15)
     r.raise_for_status()
-
     return [l.strip() for l in r.text.splitlines() if l.startswith("WIBB")]
 
 # =====================================
-# METAR PARSING (DISPLAY)
+# METAR DISPLAY PARSER
 # =====================================
 def wind(m):
     x = re.search(r'(\d{3})(\d{2})KT', m)
@@ -87,18 +80,6 @@ def wind(m):
 def visibility(m):
     x = re.search(r' (\d{4}) ', m)
     return f"{x.group(1)} m" if x else "-"
-
-def weather(m):
-    if "TS" in m: return "Thunderstorm / Badai Guntur"
-    if "RA" in m: return "Rain / Hujan"
-    if "FG" in m: return "Fog / Kabut"
-    return "Nil"
-
-def cloud(m):
-    if "OVC" in m: return "Overcast / Tertutup"
-    if "BKN" in m: return "Broken / Terputus"
-    if "SCT" in m: return "Scattered / Tersebar"
-    return "Clear / Cerah"
 
 def temp_dew(m):
     x = re.search(r' (M?\d{2})/(M?\d{2})', m)
@@ -109,7 +90,7 @@ def qnh(m):
     return f"{x.group(1)} hPa" if x else "-"
 
 # =====================================
-# METAR PARSING (NUMERIC)
+# METAR NUMERIC PARSER
 # =====================================
 def parse_numeric_metar(m):
     t = re.search(r' (\d{2})(\d{2})(\d{2})Z', m)
@@ -150,16 +131,15 @@ def parse_numeric_metar(m):
     return data
 
 # =====================================
-# PURE PDF GENERATOR
+# SIMPLE PDF GENERATOR
 # =====================================
 def generate_pdf(lines):
     content = "BT\n/F1 10 Tf\n72 800 Td\n"
     for l in lines:
-        safe = l.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-        content += f"({safe}) Tj\n0 -14 Td\n"
+        content += f"({l}) Tj\n0 -14 Td\n"
     content += "ET"
 
-    pdf = (
+    return (
         b"%PDF-1.4\n"
         b"1 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n"
         b"2 0 obj<< /Length " + str(len(content)).encode() +
@@ -173,77 +153,78 @@ def generate_pdf(lines):
         b"xref\n0 6\n0000000000 65535 f \n"
         b"trailer<< /Size 6 /Root 5 0 R >>\n%%EOF"
     )
-    return pdf
 
 # =====================================
-# MAIN APP — QAM
+# MAIN UI — QAM
 # =====================================
 st.title("QAM METEOROLOGICAL REPORT")
-st.subheader("Lanud Roesmin Nurjadin (WIBB)")
+st.subheader("Lanud Roesmin Nurjadin — WIBB")
 
 metar = fetch_metar()
 now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
 
 qam_text = [
-    "MARKAS BESAR ANGKATAN UDARA",
-    "DINAS PENGEMBANGAN OPERASI",
-    "",
-    "METEOROLOGICAL REPORT FOR TAKE OFF AND LANDING",
-    "",
-    f"DATE / TIME (UTC) : {now}",
-    "AERODROME        : WIBB",
-    f"SURFACE WIND     : {wind(metar)}",
-    f"VISIBILITY       : {visibility(metar)}",
-    f"PRESENT WEATHER : {weather(metar)}",
-    f"LOW CLOUD        : {cloud(metar)}",
-    f"TEMP / DEWPOINT  : {temp_dew(metar)}",
-    f"QNH              : {qnh(metar)}",
+    "METEOROLOGICAL REPORT",
+    f"DATE/TIME UTC : {now}",
+    f"SURFACE WIND  : {wind(metar)}",
+    f"VISIBILITY    : {visibility(metar)}",
+    f"TEMP / DEW    : {temp_dew(metar)}",
+    f"QNH           : {qnh(metar)}",
     "",
     "RAW METAR:",
     metar
 ]
 
 st.download_button(
-    "⬇️ UNDUH QAM (PDF)",
+    "⬇️ Download QAM (PDF)",
     data=generate_pdf(qam_text),
     file_name="QAM_WIBB.pdf",
     mime="application/pdf"
 )
 
-st.divider()
 st.code(metar)
 
 # =====================================
-# 🎖️ MIL-STYLE MULTI-PANEL METEOGRAM
+# TAFOR — RAW ICAO
 # =====================================
-st.subheader("📊 Historical METAR Meteogram — WIBB (Last 24h)")
-st.caption("MIL-style multi-panel | METAR-based | Situational awareness only")
+st.divider()
+st.subheader("✈️ TAFOR — Terminal Aerodrome Forecast (RAW ICAO)")
+
+try:
+    taf = fetch_taf()
+    st.code(taf if taf else "TAF not available")
+except Exception:
+    st.warning("TAF data not available")
+
+# =====================================
+# HISTORICAL METEOGRAM
+# =====================================
+st.divider()
+st.subheader("📊 Historical METAR Meteogram — Last 24h")
 
 raw = fetch_metar_history(24)
 source = "AviationWeather.gov"
 
 if not raw or len(raw) < 2:
     raw = fetch_metar_ogimet(24)
-    source = "OGIMET Archive"
+    source = "OGIMET"
 
 records = [parse_numeric_metar(m) for m in raw]
 df = pd.DataFrame([r for r in records if r])
 
 st.caption(f"Data source: {source} | Records: {len(df)}")
 
-if df.empty:
-    st.warning("No historical METAR data available.")
-else:
+if not df.empty:
     df.sort_values("time", inplace=True)
 
     fig = make_subplots(
-        rows=5, cols=1, shared_xaxes=True, vertical_spacing=0.03,
+        rows=5, cols=1, shared_xaxes=True,
         subplot_titles=[
             "Temperature / Dew Point (°C)",
             "Wind Speed (kt)",
             "QNH (hPa)",
             "Visibility (m)",
-            "Weather Flags (RA / TS / FG)"
+            "Weather Flags"
         ]
     )
 
@@ -251,52 +232,35 @@ else:
     fig.add_trace(go.Scatter(x=df["time"], y=df["dew"], name="Dew"), 1, 1)
     fig.add_trace(go.Scatter(x=df["time"], y=df["wind"], name="Wind"), 2, 1)
     fig.add_trace(go.Scatter(x=df["time"], y=df["qnh"], name="QNH"), 3, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Visibility"), 4, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Vis"), 4, 1)
 
-    fig.add_trace(go.Scatter(x=df["time"], y=df["RA"].astype(int),
-                             mode="markers", name="RA"), 5, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["TS"].astype(int),
-                             mode="markers", name="TS"), 5, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["FG"].astype(int),
-                             mode="markers", name="FG"), 5, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["RA"].astype(int), mode="markers", name="RA"), 5, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["TS"].astype(int), mode="markers", name="TS"), 5, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["FG"].astype(int), mode="markers", name="FG"), 5, 1)
 
     fig.update_layout(height=950, hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
+
 # =====================================
-# 📥 DATA EXPORT (CSV & JSON)
+# EXPORT CSV / JSON
 # =====================================
+st.divider()
 st.subheader("📥 Download Historical METAR Data")
 
 if not df.empty:
-    # Pastikan waktu dalam ISO format
     export_df = df.copy()
     export_df["time"] = export_df["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # CSV
-    csv_data = export_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "⬇️ Download CSV",
+        export_df.to_csv(index=False),
+        "WIBB_METAR_24H.csv",
+        "text/csv"
+    )
 
-    # JSON
-    json_data = export_df.to_json(
-        orient="records",
-        date_format="iso"
-    ).encode("utf-8")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.download_button(
-            "⬇️ Download CSV",
-            data=csv_data,
-            file_name="WIBB_METAR_Historical_24h.csv",
-            mime="text/csv"
-        )
-
-    with col2:
-        st.download_button(
-            "⬇️ Download JSON",
-            data=json_data,
-            file_name="WIBB_METAR_Historical_24h.json",
-            mime="application/json"
-        )
-else:
-    st.info("Tidak ada data untuk diunduh.")
+    st.download_button(
+        "⬇️ Download JSON",
+        export_df.to_json(orient="records"),
+        "WIBB_METAR_24H.json",
+        "application/json"
+    )
