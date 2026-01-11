@@ -16,11 +16,12 @@ st.set_page_config(
 )
 
 # =====================================
-# DATA SOURCES
+# DATA SOURCES (OFFICIAL / TRUSTED)
 # =====================================
 METAR_API = "https://aviationweather.gov/api/data/metar"
 NOAA_TAF_API = "https://aviationweather.gov/data/metar/"
 BMKG_TAF_URL = "https://web-aviation.bmkg.go.id/web/taf.php"
+SATELLITE_HIMA_RIAU = "http://202.90.198.22/IMAGE/HIMA/H08_RP_Riau.png"
 
 # =====================================
 # FETCH METAR (REALTIME)
@@ -35,7 +36,7 @@ def fetch_metar():
     return r.text.strip()
 
 # =====================================
-# FETCH TAF — BMKG (PRIMARY, REGEX ONLY)
+# FETCH TAF — BMKG (PRIMARY)
 # =====================================
 def fetch_taf_bmkg(station="WIBB"):
     try:
@@ -108,7 +109,7 @@ def fetch_metar_ogimet(hours=24):
     return [l.strip() for l in r.text.splitlines() if l.startswith("WIBB")]
 
 # =====================================
-# METAR DISPLAY PARSER
+# METAR PARSERS
 # =====================================
 def wind(m):
     x = re.search(r'(\d{3})(\d{2})KT', m)
@@ -126,9 +127,6 @@ def qnh(m):
     x = re.search(r' Q(\d{4})', m)
     return f"{x.group(1)} hPa" if x else "-"
 
-# =====================================
-# METAR NUMERIC PARSER
-# =====================================
 def parse_numeric_metar(m):
     t = re.search(r' (\d{2})(\d{2})(\d{2})Z', m)
     if not t:
@@ -243,6 +241,25 @@ if taf:
     st.code(taf)
 else:
     st.warning("TAF not available from BMKG or NOAA.")
+
+# =====================================
+# SATELLITE — HIMAWARI-8
+# =====================================
+st.divider()
+st.subheader("🛰️ Weather Satellite — Himawari-8 (Infrared)")
+st.caption("Source: BMKG Himawari-8 | Reference only — not for tactical separation")
+
+sat_time = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
+st.caption(f"Last viewed: {sat_time}")
+
+try:
+    st.image(
+        SATELLITE_HIMA_RIAU,
+        caption="Himawari-8 IR — Cloud Top Temperature (Riau)",
+        use_container_width=True
+    )
+except Exception:
+    st.warning("Satellite imagery temporarily unavailable.")
 
 # =====================================
 # HISTORICAL METEOGRAM
