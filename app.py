@@ -20,12 +20,8 @@ st.set_page_config(
 # =====================================
 METAR_API = "https://aviationweather.gov/api/data/metar"
 SATELLITE_HIMA_RIAU = "http://202.90.198.22/IMAGE/HIMA/H08_RP_Riau.png"
-
-# BMKG Public Weather Forecast (ADM4 Pekanbaru / Riau)
-BMKG_FORECAST_API = (
-    "https://api.bmkg.go.id/publik/prakiraan-cuaca"
-    "?adm4=14.71.01.1001"
-)
+BMKG_FORECAST_API = "https://api.bmkg.go.id/publik/prakiraan-cuaca"
+BMKG_ADM4_WIBB = "14.71.01.1001"  # Pekanbaru (contoh ADM4 valid)
 
 # =====================================
 # FETCH METAR (REALTIME)
@@ -38,6 +34,18 @@ def fetch_metar():
     )
     r.raise_for_status()
     return r.text.strip()
+
+# =====================================
+# FETCH BMKG FORECAST (PUBLIC)
+# =====================================
+def fetch_bmkg_forecast():
+    r = requests.get(
+        BMKG_FORECAST_API,
+        params={"adm4": BMKG_ADM4_WIBB},
+        timeout=15
+    )
+    r.raise_for_status()
+    return r.json()
 
 # =====================================
 # HISTORICAL METAR
@@ -79,7 +87,7 @@ def fetch_metar_ogimet(hours=24):
     return [l.strip() for l in r.text.splitlines() if l.startswith("WIBB")]
 
 # =====================================
-# METAR PARSERS (WAJIB)
+# METAR PARSERS
 # =====================================
 def wind(m):
     x = re.search(r'(\d{3})(\d{2})KT', m)
@@ -114,28 +122,24 @@ def parse_numeric_metar(m):
         "FG": "FG" in m
     }
 
-    if w := re.search(r'(\d{3})(\d{2})KT', m):
+    w = re.search(r'(\d{3})(\d{2})KT', m)
+    if w:
         data["wind"] = int(w.group(2))
 
-    if td := re.search(r' (M?\d{2})/(M?\d{2})', m):
+    td = re.search(r' (M?\d{2})/(M?\d{2})', m)
+    if td:
         data["temp"] = int(td.group(1).replace("M", "-"))
         data["dew"] = int(td.group(2).replace("M", "-"))
 
-    if q := re.search(r' Q(\d{4})', m):
+    q = re.search(r' Q(\d{4})', m)
+    if q:
         data["qnh"] = int(q.group(1))
 
-    if v := re.search(r' (\d{4}) ', m):
+    v = re.search(r' (\d{4}) ', m)
+    if v:
         data["vis"] = int(v.group(1))
 
     return data
-
-# =====================================
-# BMKG WEATHER FORECAST
-# =====================================
-def fetch_bmkg_forecast():
-    r = requests.get(BMKG_FORECAST_API, timeout=15)
-    r.raise_for_status()
-    return r.json()
 
 # =====================================
 # SIMPLE PDF GENERATOR
@@ -194,29 +198,11 @@ st.download_button(
 st.code(metar)
 
 # =====================================
-# BMKG FORECAST DISPLAY
-# =====================================
-st.divider()
-st.subheader("🌦️ BMKG Weather Forecast (Public)")
-st.caption("Source: BMKG Public API — Non-ICAO (Situational Awareness)")
-
-try:
-    bmkg = fetch_bmkg_forecast()
-    for f in bmkg["data"][0]["cuaca"][:4]:
-        st.write(
-            f"🕒 {f['jamCuaca']} | "
-            f"{f['cuaca']} | "
-            f"Temp {f['temp']}°C | "
-            f"RH {f['humidity']}%"
-        )
-except Exception:
-    st.warning("BMKG forecast data unavailable.")
-
-# =====================================
-# SATELLITE
+# SATELLITE — HIMAWARI-8
 # =====================================
 st.divider()
 st.subheader("🛰️ Weather Satellite — Himawari-8 (Infrared)")
+st.caption("BMKG Himawari-8 | Reference only — not for tactical separation")
 
 try:
     img = requests.get(SATELLITE_HIMA_RIAU, timeout=10)
@@ -226,20 +212,40 @@ except Exception:
     st.warning("Satellite imagery temporarily unavailable.")
 
 # =====================================
+# BMKG FORECAST
+# =====================================
+st.divider()
+st.subheader("🌦️ BMKG Weather Forecast (Public)")
+st.caption("BMKG Public API — Non-ICAO | Situational Awareness")
+
+try:
+    bmkg = fetch_bmkg_forecast()
+    lokasi = bmkg["lokasi"]
+    st.caption(f"{lokasi['desa']}, {lokasi['kecamatan']}, {lokasi['kotkab']}")
+
+    forecast = bmkg["data"][0]["cuaca"][0]
+    for f in forecast[:6]:
+        st.write(
+            f"🕒 {f['jamCuaca']} | "
+            f"{f['cuaca']} | "
+            f"🌡️ {f['temp']}°C | "
+            f"💧 RH {f['humidity']}% | "
+            f"💨 {f['angin']}"
+        )
+except Exception:
+    st.warning("BMKG forecast data unavailable.")
+
+# =====================================
 # HISTORICAL METEOGRAM
 # =====================================
 st.divider()
 st.subheader("📊 Historical METAR Meteogram — Last 24h")
 
 raw = fetch_metar_history(24)
-source = "AviationWeather.gov"
-
 if not raw or len(raw) < 2:
     raw = fetch_metar_ogimet(24)
-    source = "OGIMET Archive"
 
 df = pd.DataFrame([parse_numeric_metar(m) for m in raw if parse_numeric_metar(m)])
-st.caption(f"Data source: {source} | Records: {len(df)}")
 
 if not df.empty:
     df.sort_values("time", inplace=True)
@@ -251,7 +257,7 @@ if not df.empty:
             "Wind Speed (kt)",
             "QNH (hPa)",
             "Visibility (m)",
-            "Weather Flags"
+            "Weather Flags (RA / TS / FG)"
         ]
     )
 
@@ -261,5 +267,22 @@ if not df.empty:
     fig.add_trace(go.Scatter(x=df["time"], y=df["qnh"], name="QNH"), 3, 1)
     fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Visibility"), 4, 1)
 
-    fig.update_layout(height=900, hovermode="x unified")
+    fig.add_trace(go.Scatter(x=df["time"], y=df["RA"].astype(int), mode="markers", name="RA"), 5, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["TS"].astype(int), mode="markers", name="TS"), 5, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["FG"].astype(int), mode="markers", name="FG"), 5, 1)
+
+    fig.update_layout(height=950, hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
+
+# =====================================
+# EXPORT DATA
+# =====================================
+st.divider()
+st.subheader("📥 Download Historical METAR Data")
+
+if not df.empty:
+    export_df = df.copy()
+    export_df["time"] = export_df["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    st.download_button("⬇️ Download CSV", export_df.to_csv(index=False), "WIBB_METAR_24H.csv")
+    st.download_button("⬇️ Download JSON", export_df.to_json(orient="records"), "WIBB_METAR_24H.json")
