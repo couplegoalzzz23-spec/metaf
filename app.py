@@ -16,7 +16,7 @@ st.set_page_config(
 )
 
 # =====================================
-# DATA SOURCES (OFFICIAL / TRUSTED)
+# DATA SOURCES
 # =====================================
 METAR_API = "https://aviationweather.gov/api/data/metar"
 NOAA_TAF_API = "https://aviationweather.gov/data/metar/"
@@ -197,7 +197,6 @@ st.subheader("Lanud Roesmin Nurjadin — WIBB")
 now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
 
 metar = fetch_metar()
-
 taf = fetch_taf_bmkg("WIBB")
 taf_source = "BMKG Web Aviation"
 
@@ -243,7 +242,7 @@ else:
     st.warning("TAF not available from BMKG or NOAA.")
 
 # =====================================
-# SATELLITE — HIMAWARI-8
+# SATELLITE — HIMAWARI-8 (SAFE LOAD)
 # =====================================
 st.divider()
 st.subheader("🛰️ Weather Satellite — Himawari-8 (Infrared)")
@@ -253,8 +252,15 @@ sat_time = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
 st.caption(f"Last viewed: {sat_time}")
 
 try:
-    st.image(
+    resp = requests.get(
         SATELLITE_HIMA_RIAU,
+        timeout=10,
+        headers={"User-Agent": "Mozilla/5.0"}
+    )
+    resp.raise_for_status()
+
+    st.image(
+        resp.content,
         caption="Himawari-8 IR — Cloud Top Temperature (Riau)",
         use_container_width=True
     )
