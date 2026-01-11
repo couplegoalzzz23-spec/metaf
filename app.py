@@ -20,6 +20,7 @@ st.set_page_config(
 # =====================================
 METAR_API = "https://aviationweather.gov/api/data/metar"
 SATELLITE_HIMA_RIAU = "http://202.90.198.22/IMAGE/HIMA/H08_RP_Riau.png"
+BMKG_FORECAST_API = "https://api.bmkg.go.id/publik/prakiraan-cuaca?adm4=31.71.03.1001"
 
 # =====================================
 # FETCH METAR (REALTIME)
@@ -32,6 +33,21 @@ def fetch_metar():
     )
     r.raise_for_status()
     return r.text.strip()
+
+# =====================================
+# FETCH BMKG FORECAST
+# =====================================
+def fetch_bmkg_forecast():
+    try:
+        r = requests.get(
+            BMKG_FORECAST_API,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
 
 # =====================================
 # HISTORICAL METAR
@@ -128,31 +144,6 @@ def parse_numeric_metar(m):
     return data
 
 # =====================================
-# SIMPLE PDF GENERATOR
-# =====================================
-def generate_pdf(lines):
-    content = "BT\n/F1 10 Tf\n72 800 Td\n"
-    for l in lines:
-        safe = l.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-        content += f"({safe}) Tj\n0 -14 Td\n"
-    content += "ET"
-
-    return (
-        b"%PDF-1.4\n"
-        b"1 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n"
-        b"2 0 obj<< /Length " + str(len(content)).encode() +
-        b" >>stream\n" + content.encode() +
-        b"\nendstream endobj\n"
-        b"3 0 obj<< /Type /Page /Parent 4 0 R /Contents 2 0 R "
-        b"/Resources<< /Font<< /F1 1 0 R >> >> >>endobj\n"
-        b"4 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 "
-        b"/MediaBox [0 0 595 842] >>endobj\n"
-        b"5 0 obj<< /Type /Catalog /Pages 4 0 R >>endobj\n"
-        b"xref\n0 6\n0000000000 65535 f \n"
-        b"trailer<< /Size 6 /Root 5 0 R >>\n%%EOF"
-    )
-
-# =====================================
 # MAIN APP
 # =====================================
 st.title("QAM METEOROLOGICAL REPORT")
@@ -161,30 +152,43 @@ st.subheader("Lanud Roesmin Nurjadin — WIBB")
 now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
 metar = fetch_metar()
 
-qam_text = [
-    "METEOROLOGICAL REPORT (QAM)",
-    f"DATE / TIME (UTC) : {now}",
-    "AERODROME        : WIBB",
-    f"SURFACE WIND     : {wind(metar)}",
-    f"VISIBILITY       : {visibility(metar)}",
-    f"TEMP / DEWPOINT  : {temp_dew(metar)}",
-    f"QNH              : {qnh(metar)}",
-    "",
-    "RAW METAR:",
-    metar
-]
-
-st.download_button(
-    "⬇️ Download QAM (PDF)",
-    data=generate_pdf(qam_text),
-    file_name="QAM_WIBB.pdf",
-    mime="application/pdf"
-)
-
 st.code(metar)
 
 # =====================================
-# SATELLITE — HIMAWARI-8
+# BMKG FORECAST DISPLAY
+# =====================================
+st.divider()
+st.subheader("🌦️ Prakiraan Cuaca — BMKG (NON-ICAO)")
+st.caption("BMKG Official Forecast | Reference only — NOT a replacement for METAR / TAF")
+
+forecast = fetch_bmkg_forecast()
+
+if forecast and "data" in forecast:
+    lokasi = forecast["data"][0]
+    cuaca = lokasi.get("cuaca", [])
+
+    for slot in cuaca[:6]:  # tampilkan 6 periode ke depan
+        waktu = slot.get("local_datetime", "-")
+        desc = slot.get("weather_desc", "-")
+        temp = slot.get("t", "-")
+        rh = slot.get("hu", "-")
+        wind = slot.get("ws", "-")
+
+        st.markdown(
+            f"""
+            **🕒 {waktu}**  
+            🌤️ Cuaca: **{desc}**  
+            🌡️ Suhu: **{temp}°C**  
+            💧 RH: **{rh}%**  
+            💨 Angin: **{wind} km/h**
+            """
+        )
+        st.divider()
+else:
+    st.warning("BMKG forecast data unavailable.")
+
+# =====================================
+# SATELLITE
 # =====================================
 st.divider()
 st.subheader("🛰️ Weather Satellite — Himawari-8 (Infrared)")
@@ -200,57 +204,3 @@ try:
     st.image(img.content, use_container_width=True)
 except Exception:
     st.warning("Satellite imagery temporarily unavailable.")
-
-# =====================================
-# HISTORICAL METEOGRAM
-# =====================================
-st.divider()
-st.subheader("📊 Historical METAR Meteogram — Last 24h")
-
-raw = fetch_metar_history(24)
-source = "AviationWeather.gov"
-
-if not raw or len(raw) < 2:
-    raw = fetch_metar_ogimet(24)
-    source = "OGIMET Archive"
-
-df = pd.DataFrame([parse_numeric_metar(m) for m in raw if parse_numeric_metar(m)])
-st.caption(f"Data source: {source} | Records: {len(df)}")
-
-if not df.empty:
-    df.sort_values("time", inplace=True)
-
-    fig = make_subplots(
-        rows=5, cols=1, shared_xaxes=True,
-        subplot_titles=[
-            "Temperature / Dew Point (°C)",
-            "Wind Speed (kt)",
-            "QNH (hPa)",
-            "Visibility (m)",
-            "Weather Flags (RA / TS / FG)"
-        ]
-    )
-
-    fig.add_trace(go.Scatter(x=df["time"], y=df["temp"], name="Temp"), 1, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["dew"], name="Dew"), 1, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["wind"], name="Wind"), 2, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["qnh"], name="QNH"), 3, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Visibility"), 4, 1)
-
-    fig.add_trace(go.Scatter(x=df["time"], y=df["RA"].astype(int), mode="markers", name="RA"), 5, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["TS"].astype(int), mode="markers", name="TS"), 5, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["FG"].astype(int), mode="markers", name="FG"), 5, 1)
-
-    fig.update_layout(height=950, hovermode="x unified")
-    st.plotly_chart(fig, use_container_width=True)
-
-# =====================================
-# EXPORT
-# =====================================
-st.divider()
-st.subheader("📥 Download Historical METAR Data")
-
-if not df.empty:
-    df["time"] = df["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    st.download_button("⬇️ Download CSV", df.to_csv(index=False), "WIBB_METAR_24H.csv")
-    st.download_button("⬇️ Download JSON", df.to_json(orient="records"), "WIBB_METAR_24H.json")
