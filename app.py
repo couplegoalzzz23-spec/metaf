@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from PIL import Image
+from io import BytesIO
 
 # =====================================
 # PAGE CONFIG
@@ -21,11 +23,9 @@ st.set_page_config(
 METAR_API = "https://aviationweather.gov/api/data/metar"
 NOAA_TAF_API = "https://aviationweather.gov/data/metar/"
 BMKG_TAF_URL = "https://web-aviation.bmkg.go.id/web/taf.php"
-SATELLITE_HIMA_RIAU = "http://202.90.198.22/IMAGE/HIMA/H08_RP_Riau.png"
-ECMWF_API = "https://api.open-meteo.com/v1/ecmwf"
 
-LAT_WIBB = 0.460
-LON_WIBB = 101.445
+SATELLITE_IR = "http://202.90.198.22/IMAGE/HIMA/H08_RP_Riau.png"
+RADAR_RIAU = "https://inderaja.bmkg.go.id/IMAGE/RadarComposite.png"
 
 # =====================================
 # FETCH METAR
@@ -36,18 +36,19 @@ def fetch_metar():
     return r.text.strip()
 
 # =====================================
-# FETCH TAF BMKG
+# FETCH TAF BMKG (PRIMARY)
 # =====================================
 def fetch_taf_bmkg(station="WIBB"):
     try:
         r = requests.get(BMKG_TAF_URL, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
         r.raise_for_status()
-        m = re.search(rf"(TAF\s+{station}[\s\S]+?)(?:<|$)", r.text)
-        if m:
-            return re.sub(r"<[^>]+>", "", m.group(1)).strip()
-        return ""
-    except Exception:
-        return ""
+        match = re.search(rf"(TAF\s+{station}[\s\S]+?)(?:<|$)", r.text)
+        if match:
+            taf = re.sub(r"<[^>]+>", "", match.group(1))
+            return taf.strip()
+    except:
+        pass
+    return ""
 
 # =====================================
 # FETCH TAF NOAA (FALLBACK)
@@ -55,8 +56,8 @@ def fetch_taf_bmkg(station="WIBB"):
 def fetch_taf_noaa(station="WIBB"):
     r = requests.get(NOAA_TAF_API, params={"ids": station, "taf": "1"}, timeout=10)
     r.raise_for_status()
-    m = re.search(rf"(TAF\s+{station}[\s\S]*)", r.text)
-    return m.group(1).strip() if m else ""
+    match = re.search(rf"(TAF\s+{station}[\s\S]*)", r.text)
+    return match.group(1).strip() if match else ""
 
 # =====================================
 # HISTORICAL METAR
@@ -66,116 +67,128 @@ def fetch_metar_history(hours=24):
     r.raise_for_status()
     return r.text.strip().splitlines()
 
-def fetch_metar_ogimet(hours=24):
-    end = datetime.utcnow()
-    start = end - pd.Timedelta(hours=hours)
-    r = requests.get(
-        "https://www.ogimet.com/display_metars2.php",
-        params={
-            "lang": "en","lugar": "WIBB","tipo": "ALL","ord": "REV",
-            "nil": "NO","fmt": "txt",
-            "ano": start.year,"mes": start.month,"day": start.day,"hora": start.hour,
-            "anof": end.year,"mesf": end.month,"dayf": end.day,"horaf": end.hour,"minf": end.minute
-        },
-        timeout=15
-    )
-    r.raise_for_status()
-    return [l for l in r.text.splitlines() if l.startswith("WIBB")]
+# =====================================
+# METAR PARSER
+# =====================================
+def wind(m):
+    x = re.search(r'(\d{3})(\d{2})KT', m)
+    return f"{x.group(1)}° / {x.group(2)} kt" if x else "-"
 
-# =====================================
-# ECMWF (FORECAST SUPPORT ONLY)
-# =====================================
-def fetch_ecmwf():
-    r = requests.get(
-        ECMWF_API,
-        params={
-            "latitude": LAT_WIBB,
-            "longitude": LON_WIBB,
-            "hourly": "cape,cloudcover_low,cloudcover_mid,cloudcover_high",
-            "forecast_days": 2,
-            "timezone": "UTC"
-        },
-        timeout=15
-    )
-    r.raise_for_status()
-    d = r.json()
-    if "hourly" not in d:
-        raise ValueError
-    return d
+def visibility(m):
+    x = re.search(r' (\d{4}) ', m)
+    return f"{x.group(1)} m" if x else "-"
 
-# =====================================
-# METAR PARSERS
-# =====================================
-def wind(m): return re.search(r'(\d{3})(\d{2})KT', m).group(0) if re.search(r'(\d{3})(\d{2})KT', m) else "-"
-def visibility(m): return re.search(r' (\d{4}) ', m).group(1)+" m" if re.search(r' (\d{4}) ', m) else "-"
 def temp_dew(m):
-    x=re.search(r' (M?\d{2})/(M?\d{2})', m)
-    return f"{x.group(1)}/{x.group(2)} °C" if x else "-"
-def qnh(m): return re.search(r' Q(\d{4})', m).group(1)+" hPa" if re.search(r' Q(\d{4})', m) else "-"
+    x = re.search(r' (M?\d{2})/(M?\d{2})', m)
+    return f"{x.group(1)} / {x.group(2)} °C" if x else "-"
 
+def qnh(m):
+    x = re.search(r' Q(\d{4})', m)
+    return f"{x.group(1)} hPa" if x else "-"
+
+# =====================================
+# NUMERIC METAR
+# =====================================
 def parse_numeric_metar(m):
-    t=re.search(r' (\d{2})(\d{2})(\d{2})Z', m)
-    if not t: return None
+    t = re.search(r' (\d{2})(\d{2})(\d{2})Z', m)
+    if not t:
+        return None
     return {
         "time": datetime.strptime(t.group(0).strip(), "%d%H%MZ"),
         "temp": int(re.search(r' (M?\d{2})/', m).group(1).replace("M","-")) if re.search(r' (M?\d{2})/', m) else None,
         "dew": int(re.search(r'/M?\d{2}', m).group(0)[1:].replace("M","-")) if "/" in m else None,
-        "wind": int(re.search(r'KT', m).string[-2:]) if "KT" in m else None,
-        "qnh": int(re.search(r' Q(\d{4})', m).group(1)) if " Q" in m else None,
+        "wind": int(re.search(r'KT', m).group(0)[-4:-2]) if "KT" in m else None,
+        "qnh": int(re.search(r'Q(\d{4})', m).group(1)) if "Q" in m else None,
         "vis": int(re.search(r' (\d{4}) ', m).group(1)) if re.search(r' (\d{4}) ', m) else None,
-        "RA":"RA"in m,"TS":"TS"in m,"FG":"FG"in m
+        "RA": "RA" in m,
+        "TS": "TS" in m,
+        "FG": "FG" in m
     }
 
 # =====================================
-# MAIN APP
+# MAIN QAM
 # =====================================
-st.title("QAM METEOROLOGICAL REPORT — WIBB")
-now=datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
-metar=fetch_metar()
-taf=fetch_taf_bmkg() or fetch_taf_noaa()
+st.title("QAM METEOROLOGICAL REPORT")
+st.subheader("Lanud Roesmin Nurjadin (WIBB)")
+
+now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
+
+metar = fetch_metar()
+taf = fetch_taf_bmkg("WIBB")
+taf_source = "BMKG"
+
+if not taf:
+    taf = fetch_taf_noaa("WIBB")
+    taf_source = "NOAA (Fallback)"
 
 st.code(metar)
-st.subheader("✈️ TAFOR (RAW ICAO)")
+
+st.divider()
+st.subheader("✈️ TAFOR — RAW ICAO")
+st.caption(f"Source: {taf_source}")
 st.code(taf if taf else "TAF not available")
 
 # =====================================
-# SATELLITE
+# SATELLITE — HIMAWARI IR
 # =====================================
-st.subheader("🛰️ Himawari-8 IR (Reference)")
+st.divider()
+st.subheader("🛰️ Weather Satellite — Himawari-8 (Infrared)")
+st.caption("BMKG Himawari-8 | Reference only — not for tactical separation")
+
 try:
-    img=requests.get(SATELLITE_HIMA_RIAU,timeout=10).content
-    st.image(img,use_container_width=True)
+    img = Image.open(BytesIO(requests.get(SATELLITE_IR, timeout=10).content))
+    st.image(img, caption=f"Himawari-8 IR | Retrieved {now}", use_container_width=True)
+
+    st.warning("⚠️ Convective alert: Cold cloud tops may indicate CB development")
 except:
-    st.warning("Satellite unavailable")
+    st.error("Satellite imagery unavailable")
+
+st.markdown("""
+**Legend — Cloud Top Temperature**
+- ≤ −65°C : Severe CB / TS
+- −50 to −64°C : Mature convection
+- > −40°C : Stratiform
+""")
 
 # =====================================
-# ECMWF SUPPORT
+# WEATHER RADAR
 # =====================================
-st.subheader("🧠 ECMWF Forecast Support (NON-ICAO)")
+st.divider()
+st.subheader("📡 Weather Radar — Riau Composite")
+st.caption("BMKG Radar | Reflectivity (dBZ)")
+
 try:
-    e=fetch_ecmwf()
-    df=pd.DataFrame(e["hourly"])
-    df["time"]=pd.to_datetime(df["time"])
-    st.line_chart(df.set_index("time")[["cape","cloudcover_high"]])
+    radar = Image.open(BytesIO(requests.get(RADAR_RIAU, timeout=10).content))
+    st.image(radar, caption="Radar Composite | dBZ", use_container_width=True)
 except:
-    st.warning("ECMWF forecast data unavailable.")
+    st.warning("Radar imagery temporarily unavailable.")
 
-st.caption(
-    "⚠️ ECMWF is FORECAST SUPPORT ONLY — Operational decisions MUST rely on METAR / TAF / SIGMET / ATC."
-)
+st.markdown("""
+**Legend — Radar Reflectivity (dBZ)**
+- 20–30 : Light rain
+- 30–40 : Moderate rain
+- 40–50 : Heavy rain
+- >50 : Severe convection
+""")
 
 # =====================================
-# METEOGRAM
+# HISTORICAL METEOGRAM
 # =====================================
-raw=fetch_metar_history(24)
-if len(raw)<2: raw=fetch_metar_ogimet(24)
-df=pd.DataFrame([parse_numeric_metar(m) for m in raw if parse_numeric_metar(m)])
+st.divider()
+st.subheader("📊 Historical METAR Meteogram — 24h")
+
+raw = fetch_metar_history(24)
+df = pd.DataFrame([parse_numeric_metar(m) for m in raw if parse_numeric_metar(m)])
 
 if not df.empty:
-    fig=make_subplots(rows=4,cols=1,shared_xaxes=True)
-    fig.add_trace(go.Scatter(x=df.time,y=df.temp,name="Temp"),1,1)
-    fig.add_trace(go.Scatter(x=df.time,y=df.dew,name="Dew"),1,1)
-    fig.add_trace(go.Scatter(x=df.time,y=df.wind,name="Wind"),2,1)
-    fig.add_trace(go.Scatter(x=df.time,y=df.qnh,name="QNH"),3,1)
-    fig.add_trace(go.Scatter(x=df.time,y=df.vis,name="Vis"),4,1)
-    st.plotly_chart(fig,use_container_width=True)
+    df.sort_values("time", inplace=True)
+
+    fig = make_subplots(rows=5, cols=1, shared_xaxes=True)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["temp"], name="Temp"), 1, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["dew"], name="Dew"), 1, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["wind"], name="Wind"), 2, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["qnh"], name="QNH"), 3, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Vis"), 4, 1)
+
+    fig.update_layout(height=900, hovermode="x unified")
+    st.plotly_chart(fig, use_container_width=True)
