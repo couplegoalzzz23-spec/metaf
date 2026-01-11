@@ -189,8 +189,8 @@ if tab_choice == "📄 QAM METAR WIBB":
 # ===============================
 # =====================================
 if tab_choice == "🛰️ BMKG Tactical Forecast":
-    # --- Seluruh script BMKG Tactical Forecast ---
-    # Copy paste versi final sebelumnya dengan **indentasi 4 spasi di dalam if**
-    # Metrics, Trends, Windrose, Map, Table, Export
-    # Sudah siap dijalankan tanpa error indentation
-    pass  # <--- ganti dengan script BMKG Tactical Forecast lengkap
+    # --- COPY PASTE SELURUH SCRIPT BMKG TACTICAL FORECAST DENGAN INDENTASI 4 SPASI DI SINI ---
+    # (Metrics, Trends, Windrose, Map, Table, Export)
+    # Semua fungsionalitas tetap utuh
+    # Contoh singkat: tambahkan seluruh kode BMKG Tactical Forecast final sebelumnya di sini
+    pass
