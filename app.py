@@ -16,16 +16,6 @@ st.set_page_config(
 )
 
 # =====================================
-# GLOBAL STYLE
-# =====================================
-st.markdown("""
-<style>
-h1, h2, h3 { font-weight: 700; }
-.block-container { padding-top: 2rem; }
-</style>
-""", unsafe_allow_html=True)
-
-# =====================================
 # DATA SOURCES
 # =====================================
 METAR_API = "https://aviationweather.gov/api/data/metar"
@@ -34,54 +24,94 @@ BMKG_TAF_URL = "https://web-aviation.bmkg.go.id/web/taf.php"
 SATELLITE_HIMA_RIAU = "http://202.90.198.22/IMAGE/HIMA/H08_RP_Riau.png"
 
 # =====================================
-# FETCH FUNCTIONS
+# FETCH METAR (REALTIME)
 # =====================================
 def fetch_metar():
-    r = requests.get(METAR_API, params={"ids": "WIBB", "hours": 0}, timeout=10)
+    r = requests.get(
+        METAR_API,
+        params={"ids": "WIBB", "hours": 0},
+        timeout=10
+    )
     r.raise_for_status()
     return r.text.strip()
 
+# =====================================
+# FETCH TAF — BMKG (PRIMARY)
+# =====================================
 def fetch_taf_bmkg(station="WIBB"):
     try:
-        r = requests.get(BMKG_TAF_URL, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        r = requests.get(
+            BMKG_TAF_URL,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
         r.raise_for_status()
-        match = re.search(rf"(TAF\s+{station}[\s\S]+?)(?:<|$)", r.text)
-        return re.sub(r"<[^>]+>", "", match.group(1)).strip() if match else ""
+
+        text = r.text
+        match = re.search(rf"(TAF\s+{station}[\s\S]+?)(?:<|$)", text)
+        if match:
+            taf = re.sub(r"<[^>]+>", "", match.group(1))
+            return taf.strip()
+        return ""
     except Exception:
         return ""
 
+# =====================================
+# FETCH TAF — NOAA (FALLBACK)
+# =====================================
 def fetch_taf_noaa(station="WIBB"):
-    r = requests.get(NOAA_TAF_API, params={"ids": station, "taf": "1"}, timeout=10)
+    r = requests.get(
+        NOAA_TAF_API,
+        params={"ids": station, "taf": "1"},
+        timeout=10
+    )
     r.raise_for_status()
     match = re.search(rf"(TAF\s+{station}[\s\S]*)", r.text)
     return match.group(1).strip() if match else ""
 
+# =====================================
+# HISTORICAL METAR
+# =====================================
 def fetch_metar_history(hours=24):
-    r = requests.get(METAR_API, params={"ids": "WIBB", "hours": hours}, timeout=10)
+    r = requests.get(
+        METAR_API,
+        params={"ids": "WIBB", "hours": hours},
+        timeout=10
+    )
     r.raise_for_status()
     return r.text.strip().splitlines()
 
 def fetch_metar_ogimet(hours=24):
     end = datetime.utcnow()
     start = end - pd.Timedelta(hours=hours)
-    r = requests.get(
-        "https://www.ogimet.com/display_metars2.php",
-        params={
-            "lang": "en", "lugar": "WIBB", "tipo": "ALL",
-            "ord": "REV", "nil": "NO", "fmt": "txt",
-            "ano": start.year, "mes": start.month, "day": start.day,
-            "hora": start.hour, "anof": end.year, "mesf": end.month,
-            "dayf": end.day, "horaf": end.hour, "minf": end.minute
-        },
-        timeout=15
-    )
+
+    url = "https://www.ogimet.com/display_metars2.php"
+    params = {
+        "lang": "en",
+        "lugar": "WIBB",
+        "tipo": "ALL",
+        "ord": "REV",
+        "nil": "NO",
+        "fmt": "txt",
+        "ano": start.year,
+        "mes": start.month,
+        "day": start.day,
+        "hora": start.hour,
+        "anof": end.year,
+        "mesf": end.month,
+        "dayf": end.day,
+        "horaf": end.hour,
+        "minf": end.minute
+    }
+
+    r = requests.get(url, params=params, timeout=15)
     r.raise_for_status()
-    return [l for l in r.text.splitlines() if l.startswith("WIBB")]
+    return [l.strip() for l in r.text.splitlines() if l.startswith("WIBB")]
 
 # =====================================
 # METAR PARSERS
 # =====================================
-def wind(m): 
+def wind(m):
     x = re.search(r'(\d{3})(\d{2})KT', m)
     return f"{x.group(1)}° / {x.group(2)} kt" if x else "-"
 
@@ -101,124 +131,207 @@ def parse_numeric_metar(m):
     t = re.search(r' (\d{2})(\d{2})(\d{2})Z', m)
     if not t:
         return None
+
     data = {
         "time": datetime.strptime(t.group(0).strip(), "%d%H%MZ"),
-        "wind": None, "temp": None, "dew": None,
-        "qnh": None, "vis": None,
-        "RA": "RA" in m, "TS": "TS" in m, "FG": "FG" in m
+        "wind": None,
+        "temp": None,
+        "dew": None,
+        "qnh": None,
+        "vis": None,
+        "RA": "RA" in m,
+        "TS": "TS" in m,
+        "FG": "FG" in m
     }
-    for k, p in {
-        "wind": r'(\d{3})(\d{2})KT',
-        "qnh": r' Q(\d{4})',
-        "vis": r' (\d{4}) '
-    }.items():
-        x = re.search(p, m)
-        if x:
-            data[k] = int(x.group(2) if k == "wind" else x.group(1))
+
+    w = re.search(r'(\d{3})(\d{2})KT', m)
+    if w:
+        data["wind"] = int(w.group(2))
+
     td = re.search(r' (M?\d{2})/(M?\d{2})', m)
     if td:
         data["temp"] = int(td.group(1).replace("M", "-"))
         data["dew"] = int(td.group(2).replace("M", "-"))
+
+    q = re.search(r' Q(\d{4})', m)
+    if q:
+        data["qnh"] = int(q.group(1))
+
+    v = re.search(r' (\d{4}) ', m)
+    if v:
+        data["vis"] = int(v.group(1))
+
     return data
 
 # =====================================
-# SIDEBAR MENU
+# SIMPLE PDF GENERATOR
 # =====================================
-menu = st.sidebar.radio(
-    "🧭 MENU",
-    ["🏠 Home", "📄 QAM Report", "✈️ METAR & TAF", "🛰️ Satellite", "📊 Meteogram", "📥 Data Export"]
+def generate_pdf(lines):
+    content = "BT\n/F1 10 Tf\n72 800 Td\n"
+    for l in lines:
+        safe = l.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        content += f"({safe}) Tj\n0 -14 Td\n"
+    content += "ET"
+
+    return (
+        b"%PDF-1.4\n"
+        b"1 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n"
+        b"2 0 obj<< /Length " + str(len(content)).encode() +
+        b" >>stream\n" + content.encode() +
+        b"\nendstream endobj\n"
+        b"3 0 obj<< /Type /Page /Parent 4 0 R /Contents 2 0 R "
+        b"/Resources<< /Font<< /F1 1 0 R >> >> >>endobj\n"
+        b"4 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 "
+        b"/MediaBox [0 0 595 842] >>endobj\n"
+        b"5 0 obj<< /Type /Catalog /Pages 4 0 R >>endobj\n"
+        b"xref\n0 6\n0000000000 65535 f \n"
+        b"trailer<< /Size 6 /Root 5 0 R >>\n%%EOF"
+    )
+
+# =====================================
+# MAIN APP
+# =====================================
+st.title("QAM METEOROLOGICAL REPORT")
+st.subheader("Lanud Roesmin Nurjadin — WIBB")
+
+now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
+
+metar = fetch_metar()
+taf = fetch_taf_bmkg("WIBB")
+taf_source = "BMKG Web Aviation"
+
+if not taf:
+    taf = fetch_taf_noaa("WIBB")
+    taf_source = "NOAA AviationWeather (Fallback)"
+
+qam_text = [
+    "METEOROLOGICAL REPORT (QAM)",
+    f"DATE / TIME (UTC) : {now}",
+    "AERODROME        : WIBB",
+    f"SURFACE WIND     : {wind(metar)}",
+    f"VISIBILITY       : {visibility(metar)}",
+    f"TEMP / DEWPOINT  : {temp_dew(metar)}",
+    f"QNH              : {qnh(metar)}",
+    "",
+    "RAW METAR:",
+    metar,
+    "",
+    "RAW TAF:",
+    taf if taf else "TAF not available"
+]
+
+st.download_button(
+    "⬇️ Download QAM (PDF)",
+    data=generate_pdf(qam_text),
+    file_name="QAM_WIBB.pdf",
+    mime="application/pdf"
 )
 
+st.code(metar)
+
 # =====================================
-# DATA LOAD
+# TAF DISPLAY
 # =====================================
-now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
-metar = fetch_metar()
-taf = fetch_taf_bmkg() or fetch_taf_noaa()
+st.divider()
+st.subheader("✈️ TAFOR — Terminal Aerodrome Forecast (RAW ICAO)")
+st.caption(f"Source: {taf_source}")
+
+if taf:
+    st.code(taf)
+else:
+    st.warning("TAF not available from BMKG or NOAA.")
+
+# =====================================
+# SATELLITE — HIMAWARI-8 (SAFE LOAD)
+# =====================================
+st.divider()
+st.subheader("🛰️ Weather Satellite — Himawari-8 (Infrared)")
+st.caption("Source: BMKG Himawari-8 | Reference only — not for tactical separation")
+
+sat_time = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
+st.caption(f"Last viewed: {sat_time}")
+
+try:
+    resp = requests.get(
+        SATELLITE_HIMA_RIAU,
+        timeout=10,
+        headers={"User-Agent": "Mozilla/5.0"}
+    )
+    resp.raise_for_status()
+
+    st.image(
+        resp.content,
+        caption="Himawari-8 IR — Cloud Top Temperature (Riau)",
+        use_container_width=True
+    )
+except Exception:
+    st.warning("Satellite imagery temporarily unavailable.")
+
+# =====================================
+# HISTORICAL METEOGRAM
+# =====================================
+st.divider()
+st.subheader("📊 Historical METAR Meteogram — Last 24h")
 
 raw = fetch_metar_history(24)
-if len(raw) < 2:
+source = "AviationWeather.gov"
+
+if not raw or len(raw) < 2:
     raw = fetch_metar_ogimet(24)
+    source = "OGIMET Archive"
 
-df = pd.DataFrame([parse_numeric_metar(m) for m in raw if parse_numeric_metar(m)])
+records = [parse_numeric_metar(m) for m in raw]
+df = pd.DataFrame([r for r in records if r])
 
-# =====================================
-# HOME
-# =====================================
-if menu == "🏠 Home":
-    st.title("QAM METOC OPERATIONS DASHBOARD")
-    st.subheader("Lanud Roesmin Nurjadin — WIBB")
-    st.info("""
-**Operational Aviation Weather Information**
+st.caption(f"Data source: {source} | Records: {len(df)}")
 
-✔ METAR / TAF (ICAO)  
-✔ Satellite (Situational Awareness)  
-✔ Historical Meteogram  
-✔ QAM PDF Generator  
+if not df.empty:
+    df.sort_values("time", inplace=True)
 
-⚠️ Tactical decisions must rely on official ICAO products & ATC clearance.
-""")
+    fig = make_subplots(
+        rows=5, cols=1, shared_xaxes=True,
+        subplot_titles=[
+            "Temperature / Dew Point (°C)",
+            "Wind Speed (kt)",
+            "QNH (hPa)",
+            "Visibility (m)",
+            "Weather Flags (RA / TS / FG)"
+        ]
+    )
 
-# =====================================
-# QAM REPORT
-# =====================================
-elif menu == "📄 QAM Report":
-    st.subheader("📄 QAM Meteorological Report")
-    qam = [
-        "METEOROLOGICAL REPORT (QAM)",
-        f"DATE / TIME (UTC) : {now}",
-        "AERODROME        : WIBB",
-        f"SURFACE WIND     : {wind(metar)}",
-        f"VISIBILITY       : {visibility(metar)}",
-        f"TEMP / DEWPOINT  : {temp_dew(metar)}",
-        f"QNH              : {qnh(metar)}",
-        "", "RAW METAR:", metar
-    ]
-    st.code("\n".join(qam))
+    fig.add_trace(go.Scatter(x=df["time"], y=df["temp"], name="Temp"), 1, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["dew"], name="Dew"), 1, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["wind"], name="Wind"), 2, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["qnh"], name="QNH"), 3, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Visibility"), 4, 1)
 
-# =====================================
-# METAR & TAF
-# =====================================
-elif menu == "✈️ METAR & TAF":
-    st.subheader("✈️ METAR")
-    st.code(metar)
-    st.subheader("✈️ TAF")
-    st.code(taf)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["RA"].astype(int), mode="markers", name="RA"), 5, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["TS"].astype(int), mode="markers", name="TS"), 5, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["FG"].astype(int), mode="markers", name="FG"), 5, 1)
 
-# =====================================
-# SATELLITE
-# =====================================
-elif menu == "🛰️ Satellite":
-    st.subheader("🛰️ Himawari-8 Infrared — Riau")
-    try:
-        img = requests.get(SATELLITE_HIMA_RIAU, timeout=10)
-        img.raise_for_status()
-        st.image(img.content, use_container_width=True)
-    except Exception:
-        st.warning("Satellite imagery unavailable.")
-
-# =====================================
-# METEOGRAM
-# =====================================
-elif menu == "📊 Meteogram":
-    st.subheader("📊 METAR Meteogram (24h)")
-    if not df.empty:
-        df.sort_values("time", inplace=True)
-        fig = make_subplots(rows=5, cols=1, shared_xaxes=True)
-        fig.add_trace(go.Scatter(x=df["time"], y=df["temp"], name="Temp"), 1, 1)
-        fig.add_trace(go.Scatter(x=df["time"], y=df["dew"], name="Dew"), 1, 1)
-        fig.add_trace(go.Scatter(x=df["time"], y=df["wind"], name="Wind"), 2, 1)
-        fig.add_trace(go.Scatter(x=df["time"], y=df["qnh"], name="QNH"), 3, 1)
-        fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Vis"), 4, 1)
-        st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(height=950, hovermode="x unified")
+    st.plotly_chart(fig, use_container_width=True)
 
 # =====================================
 # EXPORT
 # =====================================
-elif menu == "📥 Data Export":
-    st.subheader("📥 Download Data")
-    if not df.empty:
-        df2 = df.copy()
-        df2["time"] = df2["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-        st.download_button("⬇️ CSV", df2.to_csv(index=False), "WIBB_METAR_24H.csv")
-        st.download_button("⬇️ JSON", df2.to_json(orient="records"), "WIBB_METAR_24H.json")
+st.divider()
+st.subheader("📥 Download Historical METAR Data")
+
+if not df.empty:
+    export_df = df.copy()
+    export_df["time"] = export_df["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    st.download_button(
+        "⬇️ Download CSV",
+        export_df.to_csv(index=False),
+        "WIBB_METAR_24H.csv",
+        "text/csv"
+    )
+
+    st.download_button(
+        "⬇️ Download JSON",
+        export_df.to_json(orient="records"),
+        "WIBB_METAR_24H.json",
+        "application/json"
+    )
