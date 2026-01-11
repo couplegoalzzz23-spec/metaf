@@ -254,3 +254,15 @@ if not df.empty:
     df["time"] = df["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     st.download_button("⬇️ Download CSV", df.to_csv(index=False), "WIBB_METAR_24H.csv")
     st.download_button("⬇️ Download JSON", df.to_json(orient="records"), "WIBB_METAR_24H.json")
+# =====================================
+# 🗺️ PETA
+# =====================================
+if show_map:
+    st.markdown("---")
+    st.subheader("🗺️ Tactical Map")
+    try:
+        lat = float(selected_entry.get("lokasi", {}).get("lat", 0))
+        lon = float(selected_entry.get("lokasi", {}).get("lon", 0))
+        st.map(pd.DataFrame({"lat": [lat], "lon": [lon]}))
+    except Exception as e:
+        st.warning(f"Map unavailable: {e}")
