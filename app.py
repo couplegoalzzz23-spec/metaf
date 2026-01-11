@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 # =====================================
-# 🌑 CSS — MILITARY STYLE + RADAR ANIMATION
+# 🌑 CSS MILITARY STYLE + RADAR ANIMATION
 # =====================================
 st.markdown("""
 <style>
@@ -36,19 +36,15 @@ hr, .stDivider{border-top:1px solid #2f3a2f;}
 """, unsafe_allow_html=True)
 
 # =====================================
-# 📡 DATA SOURCES METAR & SATELLITE
+# DATA SOURCES
 # =====================================
 METAR_API = "https://aviationweather.gov/api/data/metar"
 SATELLITE_HIMA_RIAU = "http://202.90.198.22/IMAGE/HIMA/H08_RP_Riau.png"
-
-# =====================================
-# 📡 BMKG FORECAST API
-# =====================================
 API_BASE = "https://cuaca.bmkg.go.id/api/df/v1/forecast/adm"
-MS_TO_KT = 1.94384
+MS_TO_KT = 1.94384  # m/s ke knot
 
 # =====================================
-# FETCH FUNCTIONS
+# FETCH FUNCTIONS — QAM METAR
 # =====================================
 def fetch_metar():
     r = requests.get(METAR_API, params={"ids":"WIBB","hours":0}, timeout=10)
@@ -78,12 +74,10 @@ def parse_numeric_metar(m):
     if not t: return None
     data = {"time":datetime.strptime(t.group(0).strip(),"%d%H%MZ"), "wind":None, "temp":None, "dew":None, "qnh":None, "vis":None,
             "RA":"RA" in m, "TS":"TS" in m, "FG":"FG" in m}
-    w = re.search(r'(\d{3})(\d{2})KT', m)
+    w = re.search(r'(\d{3})(\d{2})KT', m); td = re.search(r' (M?\d{2})/(M?\d{2})', m); q = re.search(r' Q(\d{4})', m); v = re.search(r' (\d{4}) ', m)
     if w: data["wind"]=int(w.group(2))
-    td = re.search(r' (M?\d{2})/(M?\d{2})', m)
     if td: data["temp"]=int(td.group(1).replace("M","-")); data["dew"]=int(td.group(2).replace("M","-"))
-    q = re.search(r' Q(\d{4})', m); v = re.search(r' (\d{4}) ', m)
-    if q: data["qnh"]=int(q.group(1)); 
+    if q: data["qnh"]=int(q.group(1))
     if v: data["vis"]=int(v.group(1))
     return data
 
@@ -94,9 +88,12 @@ def generate_pdf(lines):
     return (b"%PDF-1.4\n1 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n2 0 obj<< /Length " +
             str(len(content)).encode() + b" >>stream\n" + content.encode() + b"\nendstream endobj\n3 0 obj<< /Type /Page /Parent 4 0 R /Contents 2 0 R /Resources<< /Font<< /F1 1 0 R >> >> >>endobj\n4 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 595 842] >>endobj\n5 0 obj<< /Type /Catalog /Pages 4 0 R >>endobj\nxref\n0 6\n0000000000 65535 f \ntrailer<< /Size 6 /Root 5 0 R >>\n%%EOF")
 
+# =====================================
+# FETCH FUNCTIONS — BMKG FORECAST
+# =====================================
 @st.cache_data(ttl=300)
 def fetch_forecast(adm1: str):
-    params = {"adm1":adm1}; resp=requests.get(API_BASE, params=params, timeout=10); resp.raise_for_status(); return resp.json()
+    params={"adm1":adm1}; resp=requests.get(API_BASE, params=params, timeout=10); resp.raise_for_status(); return resp.json()
 
 def flatten_cuaca_entry(entry):
     rows=[]; lokasi=entry.get("lokasi",{})
@@ -114,7 +111,7 @@ def flatten_cuaca_entry(entry):
     return df
 
 # =====================================
-# 🎚️ SIDEBAR CONTROLS
+# SIDEBAR CONTROLS
 # =====================================
 with st.sidebar:
     st.title("🛰️ Tactical Controls")
@@ -130,9 +127,8 @@ with st.sidebar:
     st.caption("Data Source: BMKG API | Theme: Military Ops v1.0")
 
 # =====================================
-# ================================
 # PAGE CONTENT
-# ================================
+# =====================================
 if page=="Home":
     st.title("🏠 Home")
     st.subheader("QAM METEOROLOGICAL REPORT")
@@ -143,7 +139,7 @@ if page=="Home":
     st.metric("Temp/Dew", temp_dew(metar))
     st.metric("QNH", qnh(metar))
     st.code(metar)
-    
+
 elif page=="QAM METAR":
     st.title("📄 QAM METAR WIBB")
     now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
@@ -179,7 +175,7 @@ elif page=="QAM METAR":
         for w in ["RA","TS","FG"]: fig.add_trace(go.Scatter(x=df_metar["time"], y=df_metar[w].astype(int), mode="markers", name=w),5,1)
         fig.update_layout(height=950, hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
-        
+
 elif page=="Forecast BMKG":
     st.title("🌐 Forecast BMKG")
     with st.spinner("🛰️ Fetching forecast data..."):
