@@ -7,93 +7,89 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # =====================================
-# 1. PAGE CONFIG & STYLING
+# 1. KONFIGURASI HALAMAN
 # =====================================
 st.set_page_config(
-    page_title="QAM METOC WIBB",
+    page_title="METOC WIBB Dashboard",
     page_icon="✈️",
     layout="wide"
 )
 
-# Custom CSS untuk tampilan lebih profesional
+# Custom CSS untuk mempercantik UI
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .stMetric { 
-        background-color: #ffffff; 
-        padding: 15px; 
-        border-radius: 10px; 
+    .stMetric {
+        background-color: #ffffff;
+        padding: 15px;
+        border-radius: 10px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        border: 1px solid #eee;
+        border: 1px solid #f0f2f6;
     }
-    [data-testid="stHeader"] { background: rgba(0,0,0,0); }
     </style>
     """, unsafe_allow_html=True)
 
 # =====================================
-# 2. CONSTANTS & DATA SOURCES
+# 2. SUMBER DATA & BRIDGING GAMBAR
 # =====================================
 METAR_API = "https://aviationweather.gov/api/data/metar"
-# Link Satelit BMKG Riau & Sumatera
-SATELLITE_RIAU = "https://inderaja.bmkg.go.id/DataSatmet/Provinsi/RIAU.png"
-SATELLITE_SUMATERA = "https://inderaja.bmkg.go.id/DataSatmet/HIMAWARI8/H08_EH_Sumatera_Bagian_Utara.png"
+# URL Satelit BMKG
+URL_SAT_RIAU = "https://inderaja.bmkg.go.id/DataSatmet/Provinsi/RIAU.png"
+URL_SAT_SUMATERA = "https://inderaja.bmkg.go.id/DataSatmet/HIMAWARI8/H08_EH_Sumatera_Bagian_Utara.png"
 
-# =====================================
-# 3. HELPER FUNCTIONS (PARSERS & FETCHERS)
-# =====================================
-def get_image_bytes(url):
-    """Mengambil gambar dengan Header agar tidak diblokir server BMKG"""
+def get_image_secured(url):
+    """
+    Fungsi krusial untuk mengambil gambar dari BMKG dengan Header Browser 
+    agar tidak diblokir oleh server (403 Forbidden).
+    """
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Referer": "https://inderaja.bmkg.go.id/"
         }
-        r = requests.get(url, headers=headers, timeout=15)
-        r.raise_for_status()
-        return r.content
-    except:
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        return response.content
+    except Exception as e:
         return None
 
+# =====================================
+# 3. FUNGSI FETCH & PARSING DATA
+# =====================================
 def fetch_metar():
     try:
         r = requests.get(METAR_API, params={"ids": "WIBB", "hours": 0}, timeout=10)
         return r.text.strip()
-    except:
-        return ""
+    except: return ""
 
 def fetch_metar_history(hours=24):
     try:
         r = requests.get(METAR_API, params={"ids": "WIBB", "hours": hours}, timeout=10)
         return r.text.strip().splitlines()
-    except:
-        return []
+    except: return []
 
-def parse_numeric_metar(m):
+def parse_metar_to_dict(m):
     t = re.search(r' (\d{2})(\d{2})(\d{2})Z', m)
     if not t: return None
     
-    data = {
-        "time": datetime.strptime(t.group(0).strip(), "%d%H%MZ"),
-        "wind_dir": re.search(r'(\d{3})\d{2}KT', m).group(1) if re.search(r'(\d{3})\d{2}KT', m) else "000",
-        "wind": int(re.search(r'\d{3}(\d{2})KT', m).group(1)) if re.search(r'\d{3}(\d{2})KT', m) else 0,
-        "temp": None, "dew": None, "qnh": None, "vis": None,
-        "RA": "RA" in m, "TS": "TS" in m, "FG": "FG" in m
-    }
-    
+    # Ekstraksi komponen utama
+    w = re.search(r'(\d{3})(\d{2})KT', m)
     td = re.search(r' (M?\d{2})/(M?\d{2})', m)
-    if td:
-        data["temp"] = int(td.group(1).replace("M", "-"))
-        data["dew"] = int(td.group(2).replace("M", "-"))
-    
     q = re.search(r' Q(\d{4})', m)
-    if q: data["qnh"] = int(q.group(1))
-    
     v = re.search(r' (\d{4}) ', m)
-    if v: data["vis"] = int(v.group(1))
     
-    return data
+    return {
+        "time": datetime.strptime(t.group(0).strip(), "%d%H%MZ"),
+        "wind_dir": w.group(1) if w else "000",
+        "wind_spd": int(w.group(2)) if w else 0,
+        "temp": int(td.group(1).replace("M", "-")) if td else None,
+        "dew": int(td.group(2).replace("M", "-")) if td else None,
+        "qnh": int(q.group(1)) if q else None,
+        "vis": int(v.group(1)) if v else None,
+        "raw": m
+    }
 
-def generate_pdf(lines):
+def generate_pdf_blob(lines):
+    # Logika PDF sederhana sesuai permintaan asli
     content = "BT\n/F1 10 Tf\n72 800 Td\n"
     for l in lines:
         safe = l.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
@@ -106,111 +102,89 @@ def generate_pdf(lines):
             b"5 0 obj<< /Type /Catalog /Pages 4 0 R >>endobj\nxref\n0 6\n0000000000 65535 f \ntrailer<< /Size 6 /Root 5 0 R >>\n%%EOF")
 
 # =====================================
-# 4. MAIN UI ROUTINE
+# 4. TAMPILAN DASHBOARD UTAMA
 # =====================================
 st.title("🚁 QAM METEOROLOGICAL REPORT")
-st.subheader("Lanud Roesmin Nurjadin — Pekanbaru (WIBB)")
+st.subheader("Lanud Roesmin Nurjadin (WIBB) — Pekanbaru")
 
-# Fetch Data Terbaru
-metar = fetch_metar()
-parsed = parse_numeric_metar(metar)
-now_utc = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
+# Ambil data terkini
+raw_metar = fetch_metar()
+data = parse_metar_to_dict(raw_metar)
+now = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
 
-# Row 1: Metrics (Dashboard Style)
+# Baris Metrik Utama
 st.divider()
-m1, m2, m3, m4, m5 = st.columns(5)
-if parsed:
-    m1.metric("WIND", f"{parsed['wind_dir']}° / {parsed['wind']} KT")
-    m2.metric("VISIBILITY", f"{parsed['vis']} M" if parsed['vis'] else "N/A")
-    m3.metric("TEMP / DEW", f"{parsed['temp']}°C / {parsed['dew']}°C")
-    m4.metric("QNH", f"{parsed['qnh']} hPa")
-    # Logika Flight Category sederhana
-    if parsed['vis'] and parsed['vis'] < 5000:
-        m5.metric("STATUS", "🔴 IMC")
-    else:
-        m5.metric("STATUS", "🟢 VMC")
+c1, c2, c3, c4, c5 = st.columns(5)
+if data:
+    c1.metric("WIND", f"{data['wind_dir']}° / {data['wind_spd']} KT")
+    c2.metric("VISIBILITY", f"{data['vis']} M" if data['vis'] else "N/A")
+    c3.metric("TEMP / DEW", f"{data['temp']}°C / {data['dew']}°C")
+    c4.metric("QNH", f"{data['qnh']} hPa")
+    status = "🟢 VMC" if (data['vis'] and data['vis'] >= 5000) else "🔴 IMC"
+    c5.metric("FLIGHT CAT", status)
 else:
-    st.error("Gagal mendapatkan data METAR terbaru.")
+    st.error("Data METAR tidak tersedia.")
 
-# Row 2: Raw Data & Download
-with st.expander("📄 Lihat Raw METAR & Download Laporan QAM"):
-    st.code(metar, language="bash")
-    qam_content = [
-        "METEOROLOGICAL REPORT (QAM)",
-        f"DATE / TIME (UTC) : {now_utc}",
-        "AERODROME        : WIBB (Pekanbaru)",
-        f"SURFACE WIND     : {parsed['wind_dir']} deg / {parsed['wind']} kt" if parsed else "-",
-        f"VISIBILITY       : {parsed['vis']} m" if parsed else "-",
-        f"TEMP / DEWPOINT  : {parsed['temp']} / {parsed['dew']} C" if parsed else "-",
-        f"QNH              : {parsed['qnh']} hPa" if parsed else "-",
-        "", "RAW METAR:", metar
-    ]
-    st.download_button(
-        label="⬇️ Download QAM (PDF)",
-        data=generate_pdf(qam_content),
-        file_name=f"QAM_WIBB_{datetime.now().strftime('%H%M')}.pdf",
-        mime="application/pdf"
-    )
+# Bagian Download QAM
+with st.expander("📄 Raw METAR & Export PDF"):
+    st.code(raw_metar)
+    if data:
+        qam_text = [
+            "METEOROLOGICAL REPORT (QAM)",
+            f"TIME: {now}",
+            "STATION: WIBB",
+            f"WIND: {data['wind_dir']}/{data['wind_spd']} KT",
+            f"VIS: {data['vis']} M",
+            f"T/DP: {data['temp']}/{data['dew']} C",
+            f"QNH: {data['qnh']} hPa",
+            f"RAW: {raw_metar}"
+        ]
+        st.download_button("⬇️ Download QAM (PDF)", generate_pdf_blob(qam_text), "QAM_WIBB.pdf", "application/pdf")
 
 # =====================================
-# 5. SATELLITE SECTION (Riau & Sumatera)
+# 5. SATELIT CUACA (PERBAIKAN UTAMA)
 # =====================================
 st.divider()
-st.subheader("🛰️ Weather Satellite Imagery (BMKG)")
-col_sat1, col_sat2 = st.columns(2)
+st.subheader("🛰️ Satelit Cuaca Riau & Sumatera (Real-time)")
+sat_col1, sat_col2 = st.columns(2)
 
-with col_sat1:
-    st.markdown("### **Wilayah Riau (Local)**")
-    img_riau = get_image_bytes(SATELLITE_RIAU)
+with sat_col1:
+    st.write("**Provinsi Riau (Local)**")
+    img_riau = get_image_secured(URL_SAT_RIAU)
     if img_riau:
-        st.image(img_riau, caption="Provinsi Riau - Cloud Top Temperature", use_container_width=True)
+        st.image(img_riau, use_container_width=True)
     else:
-        st.warning("⚠️ Satelit Riau tidak dapat dimuat. Coba refresh beberapa saat lagi.")
+        st.warning("Gagal memuat citra satelit Riau.")
 
-with col_sat2:
-    st.markdown("### **Sumatera Bagian Utara**")
-    img_sum = get_image_bytes(SATELLITE_SUMATERA)
+with sat_col2:
+    st.write("**Sumatera Bagian Utara**")
+    img_sum = get_image_secured(URL_SAT_SUMATERA)
     if img_sum:
-        st.image(img_sum, caption="Himawari-8 Northern Sumatera", use_container_width=True)
+        st.image(img_sum, use_container_width=True)
     else:
-        st.warning("⚠️ Satelit Sumatera tidak dapat dimuat.")
+        st.warning("Gagal memuat citra satelit Sumatera.")
 
 # =====================================
 # 6. HISTORICAL METEOGRAM
 # =====================================
 st.divider()
-st.subheader("📊 Meteogram Trends — Last 24h")
+st.subheader("📊 Tren Cuaca 24 Jam Terakhir")
 
-raw_history = fetch_metar_history(24)
-df = pd.DataFrame([parse_numeric_metar(m) for m in raw_history if parse_numeric_metar(m)])
+hist_raw = fetch_metar_history(24)
+df = pd.DataFrame([parse_metar_to_dict(m) for m in hist_raw if parse_metar_to_dict(m)])
 
 if not df.empty:
     df.sort_values("time", inplace=True)
+    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.05)
     
-    fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True,
-        vertical_spacing=0.07,
-        subplot_titles=["Temperature & Dew Point (°C)", "Wind Speed (kt)", "QNH (hPa)", "Visibility (m)"]
-    )
-
-    fig.add_trace(go.Scatter(x=df["time"], y=df["temp"], name="Temp", line=dict(color='red', width=2)), 1, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["dew"], name="Dew", line=dict(color='blue', width=2)), 1, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["wind"], name="Wind", fill='tozeroy', line=dict(color='green')), 2, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["temp"], name="Suhu", line=dict(color='red')), 1, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["dew"], name="Titik Embun", line=dict(color='blue')), 1, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["wind_spd"], name="Angin (KT)", fill='tozeroy'), 2, 1)
     fig.add_trace(go.Scatter(x=df["time"], y=df["qnh"], name="QNH", line=dict(color='orange')), 3, 1)
-    fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Visibility", line=dict(color='purple')), 4, 1)
+    fig.add_trace(go.Scatter(x=df["time"], y=df["vis"], name="Jarak Pandang", line=dict(color='green')), 4, 1)
 
-    fig.update_layout(height=900, showlegend=True, hovermode="x unified", template="plotly_white")
+    fig.update_layout(height=800, hovermode="x unified", template="plotly_white")
     st.plotly_chart(fig, use_container_width=True)
-
-    # Export Buttons
-    st.write("📥 **Ekspor Data Historis:**")
-    c_dl1, c_dl2 = st.columns(2)
-    with c_dl1:
-        st.download_button("CSV", df.to_csv(index=False), "METAR_WIBB_24H.csv", use_container_width=True)
-    with c_dl2:
-        st.download_button("JSON", df.to_json(orient="records"), "METAR_WIBB_24H.json", use_container_width=True)
-else:
-    st.info("Menunggu data historis dari AviationWeather...")
-
-st.divider()
-st.caption("Data Source: Aviation Weather Center (AWC) & BMKG Inderaja. Not for tactical flight separation.")
+    
+    # Download Data
+    st.download_button("⬇️ Download CSV Data", df.to_csv(index=False), "WIBB_History.csv")
