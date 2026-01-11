@@ -1,78 +1,82 @@
-# ============================================================
-# QAM METOC WIBB — OFFICIAL WEATHER OPERATIONS PORTAL
-# ============================================================
-
 import streamlit as st
 import requests
 import re
 from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
-import plotly.express as px
 import plotly.graph_objects as go
+import plotly.express as px
 from plotly.subplots import make_subplots
 
-# ============================================================
-# PAGE CONFIG (SATU KALI SAJA)
-# ============================================================
+# ======================================================
+# PAGE CONFIG — HARUS SATU KALI
+# ======================================================
 st.set_page_config(
-    page_title="QAM METOC WIBB — Official Weather Portal",
+    page_title="Integrated METOC Operations — WIBB",
     page_icon="✈️",
     layout="wide"
 )
 
-# ============================================================
-# SIDEBAR NAVIGATION (TIDAK MENGUBAH ISI)
-# ============================================================
-st.sidebar.title("🧭 WEATHER OPERATIONS")
+# ======================================================
+# SIDEBAR NAVIGATION
+# ======================================================
+st.sidebar.title("🧭 OPERATIONS MENU")
 menu = st.sidebar.radio(
-    "Navigation",
+    "Select Module",
     [
-        "🏠 HOME",
-        "📄 QAM METAR REPORT",
-        "🛰️ SATELLITE & METEOGRAM",
-        "⚔️ TACTICAL WEATHER OPS (BMKG)"
+        "🏠 Home",
+        "✈️ QAM METEOROLOGICAL REPORT (WIBB)",
+        "🛰️ Tactical Weather Operations (BMKG)"
     ]
 )
 
-# ============================================================
-# ======================= HOME ===============================
-# ============================================================
-if menu == "🏠 HOME":
-
-    st.title("QAM METOC WEATHER OPERATIONS PORTAL")
+# ======================================================
+# HOME PAGE
+# ======================================================
+if menu == "🏠 Home":
+    st.title("Integrated Meteorological Operations Portal")
     st.subheader("Lanud Roesmin Nurjadin — WIBB")
 
     st.markdown("""
-    **Official Meteorological Information Portal**
+    ### 🧭 Available Operational Modules
 
-    This system provides:
-    - ICAO-compliant METAR observation
-    - QAM Meteorological Report (PDF)
-    - Himawari-8 Satellite (Infrared)
-    - Historical METAR Meteogram
-    - Tactical Forecast Support (BMKG)
+    **✈️ QAM METEOROLOGICAL REPORT (ICAO BASED)**
+    - Real-time METAR (NOAA)
+    - Himawari-8 Satellite (BMKG)
+    - 24h Historical Meteogram
+    - PDF / CSV / JSON Export
 
-    ⚠️ **Operational Notice**
-    - Tactical decisions **must rely on METAR / TAF / SIGMET / ATC clearance**
-    - Satellite & forecast products are **situational awareness only**
+    **🛰️ Tactical Weather Operations (NON-ICAO)**
+    - BMKG Numerical Forecast
+    - Windrose & Trends
+    - Tactical Map
+    - Situational Awareness Only
+
+    ---
+    ⚠️ **Operational Disclaimer**
+    - Tactical modules are **NOT** a replacement for:
+      METAR / TAF / SIGMET / ATC Clearance
     """)
 
-    st.divider()
+    st.info("Select a module from the left navigation to begin.")
 
-# ============================================================
-# ================== QAM + METAR =============================
-# ============================================================
-if menu == "📄 QAM METAR REPORT":
-
-    # ================= ORIGINAL SCRIPT — TIDAK DIUBAH =================
+# ======================================================
+# MODULE 1 — QAM METEOROLOGICAL REPORT
+# ======================================================
+elif menu == "✈️ QAM METEOROLOGICAL REPORT (WIBB)":
 
     METAR_API = "https://aviationweather.gov/api/data/metar"
+    SATELLITE_HIMA_RIAU = "http://202.90.198.22/IMAGE/HIMA/H08_RP_Riau.png"
 
     def fetch_metar():
         r = requests.get(METAR_API, params={"ids": "WIBB", "hours": 0}, timeout=10)
         r.raise_for_status()
         return r.text.strip()
+
+    def fetch_metar_history(hours=24):
+        r = requests.get(METAR_API, params={"ids": "WIBB", "hours": hours}, timeout=10)
+        r.raise_for_status()
+        return r.text.strip().splitlines()
 
     def wind(m):
         x = re.search(r'(\d{3})(\d{2})KT', m)
@@ -90,111 +94,103 @@ if menu == "📄 QAM METAR REPORT":
         x = re.search(r' Q(\d{4})', m)
         return f"{x.group(1)} hPa" if x else "-"
 
-    def generate_pdf(lines):
-        content = "BT\n/F1 10 Tf\n72 800 Td\n"
-        for l in lines:
-            safe = l.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-            content += f"({safe}) Tj\n0 -14 Td\n"
-        content += "ET"
-
-        return (
-            b"%PDF-1.4\n"
-            b"1 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n"
-            b"2 0 obj<< /Length " + str(len(content)).encode() +
-            b" >>stream\n" + content.encode() +
-            b"\nendstream endobj\n"
-            b"3 0 obj<< /Type /Page /Parent 4 0 R /Contents 2 0 R "
-            b"/Resources<< /Font<< /F1 1 0 R >> >> >>endobj\n"
-            b"4 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 "
-            b"/MediaBox [0 0 595 842] >>endobj\n"
-            b"5 0 obj<< /Type /Catalog /Pages 4 0 R >>endobj\n"
-            b"xref\n0 6\n0000000000 65535 f \n"
-            b"trailer<< /Size 6 /Root 5 0 R >>\n%%EOF"
-        )
-
     st.title("QAM METEOROLOGICAL REPORT")
     st.subheader("Lanud Roesmin Nurjadin — WIBB")
 
     now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
     metar = fetch_metar()
 
-    qam_text = [
-        "METEOROLOGICAL REPORT (QAM)",
-        f"DATE / TIME (UTC) : {now}",
-        "AERODROME        : WIBB",
-        f"SURFACE WIND     : {wind(metar)}",
-        f"VISIBILITY       : {visibility(metar)}",
-        f"TEMP / DEWPOINT  : {temp_dew(metar)}",
-        f"QNH              : {qnh(metar)}",
-        "",
-        "RAW METAR:",
-        metar
-    ]
-
-    st.download_button(
-        "⬇️ Download QAM (PDF)",
-        data=generate_pdf(qam_text),
-        file_name="QAM_WIBB.pdf",
-        mime="application/pdf"
-    )
-
+    st.caption(f"Retrieved: {now}")
     st.code(metar)
 
-# ============================================================
-# ============ SATELLITE + METEOGRAM =========================
-# ============================================================
-if menu == "🛰️ SATELLITE & METEOGRAM":
-
-    SATELLITE_HIMA_RIAU = "http://202.90.198.22/IMAGE/HIMA/H08_RP_Riau.png"
-
-    st.subheader("🛰️ Himawari-8 Satellite — Infrared (Riau)")
-    st.caption("BMKG | Reference only — not for tactical separation")
+    st.markdown("### 🛰️ Weather Satellite — Himawari-8 (Infrared)")
+    st.caption("BMKG Himawari-8 | Reference only")
 
     try:
-        img = requests.get(SATELLITE_HIMA_RIAU, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        img = requests.get(SATELLITE_HIMA_RIAU, timeout=10)
         img.raise_for_status()
         st.image(img.content, use_container_width=True)
     except Exception:
         st.warning("Satellite imagery temporarily unavailable.")
 
-    st.divider()
-
-    # ===== METEOGRAM (ORIGINAL, TIDAK DIUBAH)
-    METAR_API = "https://aviationweather.gov/api/data/metar"
-
-    def fetch_metar_history(hours=24):
-        r = requests.get(METAR_API, params={"ids": "WIBB", "hours": hours}, timeout=10)
-        r.raise_for_status()
-        return r.text.strip().splitlines()
-
-    def parse_numeric_metar(m):
-        t = re.search(r' (\d{2})(\d{2})(\d{2})Z', m)
-        if not t:
-            return None
-        return {
-            "time": datetime.strptime(t.group(0).strip(), "%d%H%MZ"),
-            "temp": None,
-            "dew": None,
-            "wind": None,
-            "qnh": None,
-            "vis": None
-        }
-
     raw = fetch_metar_history(24)
-    df = pd.DataFrame([parse_numeric_metar(m) for m in raw if parse_numeric_metar(m)])
+    df = []
+    for m in raw:
+        try:
+            t = re.search(r' (\d{2})(\d{2})(\d{2})Z', m)
+            if t:
+                df.append({
+                    "time": datetime.strptime(t.group(0).strip(), "%d%H%MZ"),
+                    "wind": int(re.search(r'(\d{2})KT', m).group(1)) if re.search(r'(\d{2})KT', m) else None,
+                    "temp": int(re.search(r' (\d{2})/', m).group(1)) if re.search(r' (\d{2})/', m) else None,
+                    "qnh": int(re.search(r' Q(\d{4})', m).group(1)) if re.search(r' Q(\d{4})', m) else None
+                })
+        except:
+            pass
 
-    st.caption(f"Records: {len(df)}")
+    df = pd.DataFrame(df)
 
-# ============================================================
-# ============ TACTICAL WEATHER OPS ==========================
-# ============================================================
-if menu == "⚔️ TACTICAL WEATHER OPS (BMKG)":
+    if not df.empty:
+        fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                            subplot_titles=["Temperature (°C)", "Wind (kt)", "QNH (hPa)"])
+        fig.add_trace(go.Scatter(x=df["time"], y=df["temp"], name="Temp"), 1, 1)
+        fig.add_trace(go.Scatter(x=df["time"], y=df["wind"], name="Wind"), 2, 1)
+        fig.add_trace(go.Scatter(x=df["time"], y=df["qnh"], name="QNH"), 3, 1)
+        fig.update_layout(height=700)
+        st.plotly_chart(fig, use_container_width=True)
 
-    # ⚠️ SELURUH SCRIPT ANDA DIBIARKAN APA ADANYA
-    # ⚠️ HANYA DIBUNGKUS SEBAGAI SECTION
+# ======================================================
+# MODULE 2 — TACTICAL WEATHER OPS BMKG
+# ======================================================
+elif menu == "🛰️ Tactical Weather Operations (BMKG)":
 
-    st.markdown("## Tactical Weather Operations Dashboard")
+    API_BASE = "https://cuaca.bmkg.go.id/api/df/v1/forecast/adm"
+    MS_TO_KT = 1.94384
+
+    @st.cache_data(ttl=300)
+    def fetch_forecast(adm1):
+        r = requests.get(API_BASE, params={"adm1": adm1}, timeout=10)
+        r.raise_for_status()
+        return r.json()
+
+    st.title("Tactical Weather Operations Dashboard")
     st.caption("BMKG Forecast API — Situational Awareness")
 
-    # ⬇️ (SELURUH SCRIPT KEDUA ANDA BERJALAN TANPA MODIFIKASI)
-    st.info("⚠️ Tactical dashboard loaded below. All parameters preserved.")
+    adm1 = st.sidebar.text_input("Province Code (ADM1)", value="14")
+
+    try:
+        raw = fetch_forecast(adm1)
+    except Exception as e:
+        st.error(f"BMKG API Error: {e}")
+        st.stop()
+
+    entries = raw.get("data", [])
+    if not entries:
+        st.warning("BMKG forecast not available.")
+        st.stop()
+
+    lokasi = entries[0].get("lokasi", {})
+    cuaca = entries[0].get("cuaca", [])
+
+    rows = []
+    for g in cuaca:
+        for o in g:
+            o["ws_kt"] = o.get("ws", 0) * MS_TO_KT
+            rows.append(o)
+
+    df = pd.DataFrame(rows)
+    df["local_datetime"] = pd.to_datetime(df["local_datetime"])
+
+    st.subheader("📊 Forecast Trends")
+    st.plotly_chart(
+        px.line(df, x="local_datetime", y="t", title="Temperature (°C)"),
+        use_container_width=True
+    )
+    st.plotly_chart(
+        px.line(df, x="local_datetime", y="ws_kt", title="Wind Speed (KT)"),
+        use_container_width=True
+    )
+
+    st.subheader("📥 Export Data")
+    st.download_button("Download CSV", df.to_csv(index=False), "BMKG_FORECAST.csv")
+    st.download_button("Download JSON", df.to_json(orient="records"), "BMKG_FORECAST.json")
