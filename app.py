@@ -16,17 +16,16 @@ st.set_page_config(
 )
 
 # =====================================
-# DATA SOURCES
+# CONSTANTS & DATA SOURCES
 # =====================================
 METAR_API = "https://aviationweather.gov/api/data/metar"
 SATELLITE_HIMA_RIAU = "http://202.90.198.22/IMAGE/HIMA/H08_RP_Riau.png"
 
-BMKG_FORECAST_API = "https://api.bmkg.go.id/publik/prakiraan-cuaca"
-BMKG_ADM4_WIBB = "14.71.04.1001"  # Pekanbaru (sekitar WIBB)
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (METOC Aviation Dashboard)"
-}
+# ADM4 Kota Pekanbaru (Riau)
+BMKG_FORECAST_API = (
+    "https://api.bmkg.go.id/publik/prakiraan-cuaca"
+    "?adm4=14.71.01.1001"
+)
 
 # =====================================
 # FETCH METAR (REALTIME)
@@ -35,7 +34,6 @@ def fetch_metar():
     r = requests.get(
         METAR_API,
         params={"ids": "WIBB", "hours": 0},
-        headers=HEADERS,
         timeout=10
     )
     r.raise_for_status()
@@ -48,38 +46,10 @@ def fetch_metar_history(hours=24):
     r = requests.get(
         METAR_API,
         params={"ids": "WIBB", "hours": hours},
-        headers=HEADERS,
         timeout=10
     )
     r.raise_for_status()
     return r.text.strip().splitlines()
-
-def fetch_metar_ogimet(hours=24):
-    end = datetime.utcnow()
-    start = end - pd.Timedelta(hours=hours)
-
-    url = "https://www.ogimet.com/display_metars2.php"
-    params = {
-        "lang": "en",
-        "lugar": "WIBB",
-        "tipo": "ALL",
-        "ord": "REV",
-        "nil": "NO",
-        "fmt": "txt",
-        "ano": start.year,
-        "mes": start.month,
-        "day": start.day,
-        "hora": start.hour,
-        "anof": end.year,
-        "mesf": end.month,
-        "dayf": end.day,
-        "horaf": end.hour,
-        "minf": end.minute
-    }
-
-    r = requests.get(url, params=params, headers=HEADERS, timeout=15)
-    r.raise_for_status()
-    return [l.strip() for l in r.text.splitlines() if l.startswith("WIBB")]
 
 # =====================================
 # METAR PARSERS
@@ -135,30 +105,6 @@ def parse_numeric_metar(m):
         data["vis"] = int(v.group(1))
 
     return data
-
-# =====================================
-# BMKG FORECAST (PUBLIC)
-# =====================================
-def fetch_bmkg_forecast():
-    r = requests.get(
-        BMKG_FORECAST_API,
-        params={"adm4": BMKG_ADM4_WIBB},
-        headers=HEADERS,
-        timeout=15
-    )
-    r.raise_for_status()
-    data = r.json()
-
-    if "data" not in data or not data["data"]:
-        return None
-
-    cuaca = data["data"][0].get("cuaca", [])
-
-    for hari in cuaca:
-        if hari:
-            return data, hari
-
-    return None
 
 # =====================================
 # SIMPLE PDF GENERATOR
@@ -217,35 +163,6 @@ st.download_button(
 st.code(metar)
 
 # =====================================
-# BMKG FORECAST DISPLAY
-# =====================================
-st.divider()
-st.subheader("🌦️ BMKG Weather Forecast (Public)")
-st.caption("BMKG Public API — Non-ICAO | Situational Awareness")
-
-result = fetch_bmkg_forecast()
-
-if result:
-    bmkg, forecast = result
-    lokasi = bmkg["lokasi"]
-
-    st.caption(
-        f"{lokasi['desa']}, {lokasi['kecamatan']}, "
-        f"{lokasi['kotkab']} — {lokasi['provinsi']}"
-    )
-
-    for f in forecast[:6]:
-        st.write(
-            f"🕒 {f['jamCuaca']} | "
-            f"{f['cuaca']} | "
-            f"🌡️ {f['temp']}°C | "
-            f"💧 RH {f['humidity']}% | "
-            f"💨 {f['angin']}"
-        )
-else:
-    st.info("BMKG forecast temporarily unavailable (model update window).")
-
-# =====================================
 # SATELLITE — HIMAWARI-8
 # =====================================
 st.divider()
@@ -253,11 +170,64 @@ st.subheader("🛰️ Weather Satellite — Himawari-8 (Infrared)")
 st.caption("BMKG Himawari-8 | Reference only — not for tactical separation")
 
 try:
-    img = requests.get(SATELLITE_HIMA_RIAU, headers=HEADERS, timeout=10)
+    img = requests.get(
+        SATELLITE_HIMA_RIAU,
+        timeout=10,
+        headers={"User-Agent": "Mozilla/5.0"}
+    )
     img.raise_for_status()
     st.image(img.content, use_container_width=True)
 except Exception:
     st.warning("Satellite imagery temporarily unavailable.")
+
+# =====================================
+# BMKG WEATHER FORECAST (PUBLIC)
+# =====================================
+st.divider()
+st.subheader("🌦️ BMKG Weather Forecast (Public)")
+st.caption("BMKG Public API — Non-ICAO | Situational Awareness")
+
+try:
+    r = requests.get(BMKG_FORECAST_API, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+
+    lokasi = data.get("lokasi", {})
+    prakiraan = data.get("data", [])
+
+    st.caption(
+        f"{lokasi.get('desa','')} — "
+        f"{lokasi.get('kecamatan','')} — "
+        f"{lokasi.get('kota','')} — "
+        f"{lokasi.get('provinsi','')}"
+    )
+
+    if prakiraan:
+        for f in prakiraan[:6]:
+            jam = (
+                f.get("jamCuaca")
+                or f.get("jam")
+                or f.get("local_datetime")
+                or "-"
+            )
+            cuaca = f.get("cuaca") or f.get("weather_desc") or "-"
+            temp = f.get("temp") or f.get("t") or "-"
+            rh = f.get("humidity") or f.get("hu") or "-"
+            angin = f.get("angin") or f.get("wd") or "-"
+
+            st.write(
+                f"🕒 {jam} | "
+                f"{cuaca} | "
+                f"🌡️ {temp}°C | "
+                f"💧 RH {rh}% | "
+                f"💨 {angin}"
+            )
+    else:
+        st.warning("BMKG forecast not issued for this ADM4 at this time.")
+
+except Exception as e:
+    st.warning("BMKG forecast data unavailable.")
+    st.caption(str(e))
 
 # =====================================
 # HISTORICAL METEOGRAM
@@ -266,14 +236,8 @@ st.divider()
 st.subheader("📊 Historical METAR Meteogram — Last 24h")
 
 raw = fetch_metar_history(24)
-source = "AviationWeather.gov"
-
-if not raw or len(raw) < 2:
-    raw = fetch_metar_ogimet(24)
-    source = "OGIMET Archive"
-
-df = pd.DataFrame([parse_numeric_metar(m) for m in raw if parse_numeric_metar(m)])
-st.caption(f"Data source: {source} | Records: {len(df)}")
+records = [parse_numeric_metar(m) for m in raw if parse_numeric_metar(m)]
+df = pd.DataFrame(records)
 
 if not df.empty:
     df.sort_values("time", inplace=True)
@@ -302,13 +266,12 @@ if not df.empty:
     fig.update_layout(height=950, hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
 
-# =====================================
-# EXPORT
-# =====================================
-st.divider()
-st.subheader("📥 Download Historical METAR Data")
+    # EXPORT (TETAP ADA)
+    st.divider()
+    st.subheader("📥 Download Historical METAR Data")
 
-if not df.empty:
-    df["time"] = df["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    st.download_button("⬇️ Download CSV", df.to_csv(index=False), "WIBB_METAR_24H.csv")
-    st.download_button("⬇️ Download JSON", df.to_json(orient="records"), "WIBB_METAR_24H.json")
+    df_export = df.copy()
+    df_export["time"] = df_export["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    st.download_button("⬇️ Download CSV", df_export.to_csv(index=False), "WIBB_METAR_24H.csv")
+    st.download_button("⬇️ Download JSON", df_export.to_json(orient="records"), "WIBB_METAR_24H.json")
