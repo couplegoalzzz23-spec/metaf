@@ -19,8 +19,6 @@ st.set_page_config(
 # DATA SOURCES
 # =====================================
 METAR_API = "https://aviationweather.gov/api/data/metar"
-NOAA_TAF_API = "https://aviationweather.gov/data/metar/"
-BMKG_TAF_URL = "https://web-aviation.bmkg.go.id/web/taf.php"
 SATELLITE_HIMA_RIAU = "http://202.90.198.22/IMAGE/HIMA/H08_RP_Riau.png"
 
 # =====================================
@@ -34,40 +32,6 @@ def fetch_metar():
     )
     r.raise_for_status()
     return r.text.strip()
-
-# =====================================
-# FETCH TAF — BMKG (PRIMARY)
-# =====================================
-def fetch_taf_bmkg(station="WIBB"):
-    try:
-        r = requests.get(
-            BMKG_TAF_URL,
-            timeout=15,
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
-        r.raise_for_status()
-
-        text = r.text
-        match = re.search(rf"(TAF\s+{station}[\s\S]+?)(?:<|$)", text)
-        if match:
-            taf = re.sub(r"<[^>]+>", "", match.group(1))
-            return taf.strip()
-        return ""
-    except Exception:
-        return ""
-
-# =====================================
-# FETCH TAF — NOAA (FALLBACK)
-# =====================================
-def fetch_taf_noaa(station="WIBB"):
-    r = requests.get(
-        NOAA_TAF_API,
-        params={"ids": station, "taf": "1"},
-        timeout=10
-    )
-    r.raise_for_status()
-    match = re.search(rf"(TAF\s+{station}[\s\S]*)", r.text)
-    return match.group(1).strip() if match else ""
 
 # =====================================
 # HISTORICAL METAR
@@ -195,14 +159,7 @@ st.title("QAM METEOROLOGICAL REPORT")
 st.subheader("Lanud Roesmin Nurjadin — WIBB")
 
 now = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
-
 metar = fetch_metar()
-taf = fetch_taf_bmkg("WIBB")
-taf_source = "BMKG Web Aviation"
-
-if not taf:
-    taf = fetch_taf_noaa("WIBB")
-    taf_source = "NOAA AviationWeather (Fallback)"
 
 qam_text = [
     "METEOROLOGICAL REPORT (QAM)",
@@ -214,10 +171,7 @@ qam_text = [
     f"QNH              : {qnh(metar)}",
     "",
     "RAW METAR:",
-    metar,
-    "",
-    "RAW TAF:",
-    taf if taf else "TAF not available"
+    metar
 ]
 
 st.download_button(
@@ -230,40 +184,20 @@ st.download_button(
 st.code(metar)
 
 # =====================================
-# TAF DISPLAY
-# =====================================
-st.divider()
-st.subheader("✈️ TAFOR — Terminal Aerodrome Forecast (RAW ICAO)")
-st.caption(f"Source: {taf_source}")
-
-if taf:
-    st.code(taf)
-else:
-    st.warning("TAF not available from BMKG or NOAA.")
-
-# =====================================
-# SATELLITE — HIMAWARI-8 (SAFE LOAD)
+# SATELLITE — HIMAWARI-8
 # =====================================
 st.divider()
 st.subheader("🛰️ Weather Satellite — Himawari-8 (Infrared)")
-st.caption("Source: BMKG Himawari-8 | Reference only — not for tactical separation")
-
-sat_time = datetime.now(timezone.utc).strftime("%d %b %Y %H%M UTC")
-st.caption(f"Last viewed: {sat_time}")
+st.caption("BMKG Himawari-8 | Reference only — not for tactical separation")
 
 try:
-    resp = requests.get(
+    img = requests.get(
         SATELLITE_HIMA_RIAU,
         timeout=10,
         headers={"User-Agent": "Mozilla/5.0"}
     )
-    resp.raise_for_status()
-
-    st.image(
-        resp.content,
-        caption="Himawari-8 IR — Cloud Top Temperature (Riau)",
-        use_container_width=True
-    )
+    img.raise_for_status()
+    st.image(img.content, use_container_width=True)
 except Exception:
     st.warning("Satellite imagery temporarily unavailable.")
 
@@ -280,9 +214,7 @@ if not raw or len(raw) < 2:
     raw = fetch_metar_ogimet(24)
     source = "OGIMET Archive"
 
-records = [parse_numeric_metar(m) for m in raw]
-df = pd.DataFrame([r for r in records if r])
-
+df = pd.DataFrame([parse_numeric_metar(m) for m in raw if parse_numeric_metar(m)])
 st.caption(f"Data source: {source} | Records: {len(df)}")
 
 if not df.empty:
@@ -319,19 +251,6 @@ st.divider()
 st.subheader("📥 Download Historical METAR Data")
 
 if not df.empty:
-    export_df = df.copy()
-    export_df["time"] = export_df["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    st.download_button(
-        "⬇️ Download CSV",
-        export_df.to_csv(index=False),
-        "WIBB_METAR_24H.csv",
-        "text/csv"
-    )
-
-    st.download_button(
-        "⬇️ Download JSON",
-        export_df.to_json(orient="records"),
-        "WIBB_METAR_24H.json",
-        "application/json"
-    )
+    df["time"] = df["time"].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    st.download_button("⬇️ Download CSV", df.to_csv(index=False), "WIBB_METAR_24H.csv")
+    st.download_button("⬇️ Download JSON", df.to_json(orient="records"), "WIBB_METAR_24H.json")
