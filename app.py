@@ -179,6 +179,7 @@ if tab_choice == "📄 QAM METAR WIBB":
         st.download_button("⬇️ Download CSV", df.to_csv(index=False), "WIBB_METAR_24H.csv")
         st.download_button("⬇️ Download JSON", df.to_json(orient="records"), "WIBB_METAR_24H.json")
 
+
 # =====================================
 # ===============================
 # TAB 2: BMKG Tactical Forecast
@@ -292,5 +293,37 @@ if tab_choice == "🛰️ BMKG Tactical Forecast":
     with c3: st.metric("WIND (KT)", f"{now.get('ws_kt', 0):.1f}")
     with c4: st.metric("RAIN (mm)", f"{now.get('tp', '—')}")
 
-    # Trends, Windrose, Map, Table, Export sama persis dengan sebelumnya
-    # (kode lengkap Tab2 dari sebelumnya, sudah aman untuk run)
+    st.markdown("---")
+    st.subheader("📊 Parameter Trends")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.plotly_chart(px.line(df_sel, x="local_datetime_dt", y="t", title="Temperature (°C)", markers=True, color_discrete_sequence=["#a9df52"]), use_container_width=True)
+        st.plotly_chart(px.line(df_sel, x="local_datetime_dt", y="hu", title="Humidity (%)", markers=True, color_discrete_sequence=["#00ffbf"]), use_container_width=True)
+    with c2:
+        st.plotly_chart(px.line(df_sel, x="local_datetime_dt", y="ws_kt", title="Wind Speed (KT)", markers=True, color_discrete_sequence=["#00ffbf"]), use_container_width=True)
+        st.plotly_chart(px.bar(df_sel, x="local_datetime_dt", y="tp", title="Rainfall (mm)", color_discrete_sequence=["#ffbf00"]), use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🌪️ Windrose — Direction & Speed")
+    if "wd_deg" in df_sel.columns and "ws_kt" in df_sel.columns:
+        df_wr = df_sel[["wd_deg", "ws_kt"]].dropna()
+        fig_wr = px.scatter_polar(df_wr, r="ws_kt", theta="wd_deg", color="ws_kt",
+                                  color_continuous_scale=px.colors.sequential.Plasma,
+                                  title="Windrose")
+        st.plotly_chart(fig_wr, use_container_width=True)
+
+    if show_map:
+        st.markdown("---")
+        st.subheader("🗺️ Tactical Map")
+        if "lat" in df_sel.columns and "lon" in df_sel.columns:
+            st.map(df_sel)
+
+    if show_table:
+        st.markdown("---")
+        st.subheader("📋 Data Table")
+        st.dataframe(df_sel)
+
+    st.markdown("---")
+    st.subheader("📥 Export Data")
+    st.download_button("⬇️ CSV", df_sel.to_csv(index=False), "BMKG_Tactical.csv")
+    st.download_button("⬇️ JSON", df_sel.to_json(orient="records"), "BMKG_Tactical.json")
